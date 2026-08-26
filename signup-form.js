@@ -6,34 +6,85 @@
   const params=new URLSearchParams(location.search);
   const next=params.get('next')||'/dashboard/';
 
-  // Founder-directed bounded signup-abuse remediation (2026-08-25):
-  // Cloudflare Turnstile, explicit render. The widget id/token live in this
-  // closure; api/auth.js's signup branch verifies the token server-side and
-  // fails closed if it's missing or invalid, so this client-side piece only
-  // needs to: render the widget once both the API script and the site key
-  // are ready, track the current token, reset the widget (issuing a fresh
-  // token) after a failed submit, and give a clear message when the widget
-  // itself hasn't loaded/finished yet -- never silently submit without it.
+  // Founder-directed bounded signup-abuse remediation (2026-08-25), fixed
+  // 2026-08-26 after Preview QA found the widget could permanently never
+  // initialize. The widget id/token live in this closure; api/auth.js's
+  // signup branch verifies the token server-side and fails closed if it's
+  // missing or invalid, so this client-side piece only needs to: render
+  // the widget once BOTH readiness conditions below are true, track the
+  // current token, reset the widget after a failed submit, and give the
+  // user a clear, DIFFERENT message for "still loading" vs. "failed to
+  // load at all" -- never leave them stuck on "please wait" forever.
+  //
+  // Two independent async readiness signals, each of which can complete in
+  // EITHER order relative to the other:
+  //   1. The Cloudflare Turnstile script itself (window.__turnstileScriptReady
+  //      -- set by the inline placeholder in signup.html, which exists
+  //      before the async <script> tag can possibly call back into it; see
+  //      that inline script's own comment for why this file must NOT be
+  //      the thing that first defines window.onTurnstileLoad).
+  //   2. Our own site-key fetch (fetchedSiteKey below).
+  // tryRenderTurnstile() is idempotent and safe to call from either signal
+  // the moment it completes -- it only actually renders once both are true.
   let turnstileToken='';
   let turnstileWidgetId=null;
-  let turnstileReady=false;
+  let turnstileRendered=false;
+  let turnstileInitFailed=false;
+  let fetchedSiteKey='';
   const turnstileContainer=document.getElementById('turnstileContainer');
-  function renderTurnstileIfReady(siteKey){
-    if(turnstileReady || !siteKey || !turnstileContainer || !window.turnstile) return;
-    turnstileReady=true;
+
+  function tryRenderTurnstile(){
+    if(turnstileRendered || turnstileInitFailed) return;
+    if(!fetchedSiteKey || !turnstileContainer || !window.turnstile) return;
+    turnstileRendered=true;
     turnstileWidgetId=window.turnstile.render(turnstileContainer,{
-      sitekey:siteKey,
+      sitekey:fetchedSiteKey,
       callback:token=>{turnstileToken=token||'';},
       'error-callback':()=>{turnstileToken='';},
       'expired-callback':()=>{turnstileToken='';}
     });
   }
-  let fetchedSiteKey='';
-  window.onTurnstileLoad=function(){ renderTurnstileIfReady(fetchedSiteKey); };
+
+  // The Cloudflare script may already have finished loading by the time
+  // THIS file runs (e.g. a fast/cached response) -- in that case
+  // __turnstileScriptReady is already true and no later callback will ever
+  // fire, so check for that directly rather than only registering a
+  // future hook.
+  if(window.__turnstileScriptReady) tryRenderTurnstile();
+  else window.__onTurnstileScriptReady=tryRenderTurnstile;
+
   fetch('/api/auth?action=turnstile-config').then(r=>r.json()).then(data=>{
     fetchedSiteKey=data && data.siteKey || '';
-    renderTurnstileIfReady(fetchedSiteKey);
-  }).catch(()=>{ /* verification is still enforced server-side; the form's own submit error will explain a failure */ });
+    if(!fetchedSiteKey){
+      // The server responded, but this environment has no Turnstile site
+      // key configured -- distinct from "still loading": this will never
+      // resolve on its own, so say so now rather than waiting out the
+      // timeout below.
+      turnstileInitFailed=true;
+      show('Verification is not available right now. Please contact support.');
+      return;
+    }
+    tryRenderTurnstile();
+  }).catch(()=>{
+    turnstileInitFailed=true;
+    show('We could not load verification. Please refresh the page and try again.');
+  });
+
+  // Load-failure timeout: if Turnstile genuinely never becomes ready (the
+  // Cloudflare script blocked/failed to load, a slow/broken network, etc.)
+  // the two signals above simply never fire and the user would otherwise
+  // be stuck on "please wait a moment" indefinitely. 12 seconds is
+  // comfortably longer than a normal load (both signals are typically
+  // sub-second) without leaving a genuinely broken page looking like it's
+  // still working. Overridable via window.__turnstileInitTimeoutMs so the
+  // deterministic browser test can exercise this path in well under a
+  // second instead of actually waiting 12 real seconds -- production
+  // behavior is unaffected since nothing ever sets that global.
+  setTimeout(()=>{
+    if(turnstileRendered || turnstileInitFailed) return;
+    turnstileInitFailed=true;
+    show('We could not load verification. Please refresh the page and try again.');
+  }, window.__turnstileInitTimeoutMs || 12000);
   // 2026-08-13 pricing decision: no new 30-day paid-capacity trials are
   // granted -- see api/auth.js's orgDefaults(), which already records a
   // requested 'solo'/'team' plan value harmlessly but grants no trial
@@ -87,7 +138,10 @@
     // friendlier message for the one case where the widget genuinely
     // hasn't finished loading yet, instead of a round trip to the server
     // just to learn the same thing.
-    if(!turnstileToken){ show('Please wait a moment for verification to finish loading, then try again.'); return; }
+    if(!turnstileToken){
+      show(turnstileInitFailed ? 'We could not load verification. Please refresh the page and try again.' : 'Please wait a moment for verification to finish loading, then try again.');
+      return;
+    }
     submit.disabled=true;
     submit.textContent='Creating account…';
     try{

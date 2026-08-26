@@ -29,12 +29,38 @@
   <div class="auth-message" id="signupMessage" role="alert"></div>
   <div class="auth-links"><span>Already have an account? <a class="auth-link" href="/login">Log In</a></span><a class="auth-link" href="/pricing.html">View Pricing</a></div>
 </main></div>
+<!-- Founder Preview QA fix (2026-08-26): window.onTurnstileLoad MUST be
+     defined here, inline, BEFORE the Turnstile <script> tag below --
+     because that script loads with the `async` attribute, Cloudflare can
+     fetch it, finish its own internal init, and invoke the onload=
+     callback at ANY time relative to the later plain <script
+     src="/signup-form.js"> tag -- there is no ordering guarantee between
+     an async script's callback firing and a later synchronous script
+     having already run. Defining onTurnstileLoad in signup-form.js itself
+     (the prior, buggy version) meant Cloudflare could call back before
+     that function existed -- a one-shot callback with no retry, so a
+     signup on that unlucky ordering never rendered a widget and could
+     never obtain a token, exactly the founder QA blocker. This tiny inline
+     placeholder always exists by the time the parser reaches the Turnstile
+     <script> tag immediately below it (inline scripts run synchronously,
+     in document order, as the parser reaches them), so the callback can
+     never be missed -- it just records readiness and, if signup-form.js
+     has already registered a handler, calls it too. -->
+<script>
+  window.__turnstileScriptReady = false;
+  window.onTurnstileLoad = function(){
+    window.__turnstileScriptReady = true;
+    if (typeof window.__onTurnstileScriptReady === 'function') window.__onTurnstileScriptReady();
+  };
+</script>
 <!-- Explicit render (render=explicit) -- signup-form.js calls
      turnstile.render() itself once it has fetched the current site key from
      /api/auth?action=turnstile-config, rather than a hardcoded
      data-sitekey, so Preview/Production can point at different Turnstile
-     widgets via env vars alone. onload=onTurnstileLoad fires once the API
-     is ready to render. -->
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit" async defer></script>
+     widgets via env vars alone. `async` alone (no `defer` -- when both are
+     present the HTML spec has `async` win and `defer` is simply ignored,
+     which made the prior "async defer" combo here misleading dead weight,
+     not a real safeguard). -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit" async></script>
 <script src="/auth-client.js"></script><script src="/signup-form.js"></script>
 </body></html>
