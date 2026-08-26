@@ -747,6 +747,16 @@ The current Serper → filtered Firecrawl scrape path remains the production pat
 
 **Firecrawl MCP — explicitly not a House Accounts roadmap item, do not add to this backlog.** The same review concluded MCP (a tool-discovery protocol built for interactive/agentic sessions) creates no Production advantage over House Accounts' existing direct, typed, timeout-bounded API call sites in its deterministic serverless pipeline. It may be useful as future developer/agent tooling for engineering investigation work (e.g. driving a live evaluation of the `/search` hypothesis above), but that is a tooling choice, not a product hypothesis, and is deliberately excluded from this backlog.
 
+### Verified-email ownership / signup account squatting — security hardening, not implemented
+
+**Surfaced by:** the 2026-08-24 signup-abuse security recon (automated spam signups, e.g. `salavat@ya.ru`), during the bounded remediation slice that added server-side signup validation and Cloudflare Turnstile (see Recently completed once merged). Corrected from that recon's original conclusion per founder direction: the incident itself remains ordinary public-form spam with no evidence of compromise, but tracing the exact signup path surfaced a separate, real weakness worth banking.
+
+**The weakness:** `api/auth.js`'s signup branch creates the Supabase Auth user via the Admin API with `email_confirm:true`, which force-confirms the submitted email address at creation regardless of whether the registrant actually controls that inbox. A registrant can therefore create a live, fully-usable House Accounts account under an email address they do not own — account squatting on an arbitrary address, not merely a made-up one.
+
+**No cross-org/data exposure was found from this** — organization membership resolves only from an existing `ha_users` row for the authenticated identity, never by matching org name/domain, so this does not let one signup access another account's data. It is an email-ownership gap, not an authorization gap.
+
+**Do not solve now.** A future decision should evaluate proper Supabase email confirmation (or another ownership-verification gate — e.g. a confirmation-link click before the account is fully usable) against the real cost to onboarding conversion, since House Accounts' signup is explicitly positioned as frictionless/free-forever. Not scoped, not approved — pick up only via an explicit founder decision, and only implement it in service of this exact item, not folded into unrelated work.
+
 ### Longer-term / older parked ideas
 
 Kept clearly lower priority unless current strategy explicitly promotes one of these — do not let them outrank the current commercial path (existing customer intelligence → reason to reach out → opportunity/play → Prepare for Call → rep action → outcome):

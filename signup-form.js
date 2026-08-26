@@ -5,6 +5,35 @@
   const message=document.getElementById('signupMessage');
   const params=new URLSearchParams(location.search);
   const next=params.get('next')||'/dashboard/';
+
+  // Founder-directed bounded signup-abuse remediation (2026-08-25):
+  // Cloudflare Turnstile, explicit render. The widget id/token live in this
+  // closure; api/auth.js's signup branch verifies the token server-side and
+  // fails closed if it's missing or invalid, so this client-side piece only
+  // needs to: render the widget once both the API script and the site key
+  // are ready, track the current token, reset the widget (issuing a fresh
+  // token) after a failed submit, and give a clear message when the widget
+  // itself hasn't loaded/finished yet -- never silently submit without it.
+  let turnstileToken='';
+  let turnstileWidgetId=null;
+  let turnstileReady=false;
+  const turnstileContainer=document.getElementById('turnstileContainer');
+  function renderTurnstileIfReady(siteKey){
+    if(turnstileReady || !siteKey || !turnstileContainer || !window.turnstile) return;
+    turnstileReady=true;
+    turnstileWidgetId=window.turnstile.render(turnstileContainer,{
+      sitekey:siteKey,
+      callback:token=>{turnstileToken=token||'';},
+      'error-callback':()=>{turnstileToken='';},
+      'expired-callback':()=>{turnstileToken='';}
+    });
+  }
+  let fetchedSiteKey='';
+  window.onTurnstileLoad=function(){ renderTurnstileIfReady(fetchedSiteKey); };
+  fetch('/api/auth?action=turnstile-config').then(r=>r.json()).then(data=>{
+    fetchedSiteKey=data && data.siteKey || '';
+    renderTurnstileIfReady(fetchedSiteKey);
+  }).catch(()=>{ /* verification is still enforced server-side; the form's own submit error will explain a failure */ });
   // 2026-08-13 pricing decision: no new 30-day paid-capacity trials are
   // granted -- see api/auth.js's orgDefaults(), which already records a
   // requested 'solo'/'team' plan value harmlessly but grants no trial
@@ -53,6 +82,12 @@
   form.addEventListener('submit',async event=>{
     event.preventDefault();
     if(!validate()) return;
+    // The server independently verifies (and fails closed on) the
+    // Turnstile token regardless of this check -- this is purely a faster,
+    // friendlier message for the one case where the widget genuinely
+    // hasn't finished loading yet, instead of a round trip to the server
+    // just to learn the same thing.
+    if(!turnstileToken){ show('Please wait a moment for verification to finish loading, then try again.'); return; }
     submit.disabled=true;
     submit.textContent='Creating account…';
     try{
@@ -64,11 +99,18 @@
         crm_erp:value('crm_erp'),
         email:value('email').toLowerCase(),
         password:value('password'),
-        plan:requestedPlan
+        plan:requestedPlan,
+        turnstileToken
       });
       location.href=next;
     }catch(error){
       show(error.message||'We could not create your account. Please try again.');
+      // A Turnstile token is single-use -- whether this particular failure
+      // was the verification itself or something else entirely (e.g. a
+      // duplicate email), the already-spent token can't be reused on a
+      // retry, so always issue a fresh one.
+      if(turnstileWidgetId!=null && window.turnstile) window.turnstile.reset(turnstileWidgetId);
+      turnstileToken='';
     }finally{
       submit.disabled=false;
       submit.textContent='Start Free';

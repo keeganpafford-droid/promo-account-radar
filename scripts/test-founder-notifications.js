@@ -42,8 +42,18 @@ function setBaseEnv() {
   process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
   process.env.RESEND_API_KEY = 'fake-resend-key';
+  // Bounded signup-abuse remediation (2026-08-25/26): signup now requires a
+  // verified Turnstile token before any Supabase Admin API call. This file
+  // is about founder-notification behavior, not that gate itself (see
+  // scripts/test-signup-abuse-remediation.js for the gate's own coverage),
+  // so every signup fixture below mocks a successful verification.
+  process.env.TURNSTILE_SECRET_KEY = 'fake-turnstile-secret';
   delete process.env.RESEND_FROM_EMAIL;
   delete process.env.ALERTS_FROM_EMAIL;
+}
+
+function turnstileSuccessRoute() {
+  return (u) => u.includes('challenges.cloudflare.com/turnstile') ? jsonResponse({ success: true }) : undefined;
 }
 
 async function withMockFetch(handlers, fn) {
@@ -95,10 +105,11 @@ async function testGenuineNewSignup() {
       : undefined,
     (u, o) => (u.includes('/rest/v1/ha_users') && o.method === 'PATCH') ? jsonResponse([{ id: 'user-1' }]) : undefined,
     (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'POST') ? jsonResponse([]) : undefined,
-    (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'DELETE') ? jsonResponse([]) : undefined
+    (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'DELETE') ? jsonResponse([]) : undefined,
+    turnstileSuccessRoute()
   ];
   const { res, resendCalls } = await withMockFetch({ routes }, async () => {
-    const req = makeReq({ action: 'signup', email: 'newuser@example.com', password: 'Sup3rSecret!1', name: 'New User', organizationName: 'Acme Inc' });
+    const req = makeReq({ action: 'signup', email: 'newuser@example.com', password: 'Sup3rSecret!1', name: 'New User', organizationName: 'Acme Inc', role: 'Owner', house_accounts: '50', turnstileToken: 'valid-turnstile-token' });
     const res = makeRes();
     await handler(req, res);
     return { res };
@@ -239,13 +250,14 @@ async function testNotificationFailureNeverBlocksSignupOrLogin() {
         : undefined,
       (u, o) => (u.includes('/rest/v1/ha_users') && o.method === 'PATCH') ? jsonResponse([{ id: 'user-3' }]) : undefined,
       (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'POST') ? jsonResponse([]) : undefined,
-      (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'DELETE') ? jsonResponse([]) : undefined
+      (u, o) => (u.includes('/rest/v1/ha_login_events') && o.method === 'DELETE') ? jsonResponse([]) : undefined,
+      turnstileSuccessRoute()
     ];
     const originalWarn = console.warn;
     const warnings = [];
     console.warn = (...args) => warnings.push(args.join(' '));
     const { res } = await withMockFetch({ routes, resend: () => jsonResponse({ message: 'Resend is down' }, false, 500) }, async () => {
-      const req = makeReq({ action: 'signup', email: 'flaky@example.com', password: 'Sup3rSecret!1', name: 'Flaky User', organizationName: 'Flaky Co' });
+      const req = makeReq({ action: 'signup', email: 'flaky@example.com', password: 'Sup3rSecret!1', name: 'Flaky User', organizationName: 'Flaky Co', role: 'Owner', house_accounts: '50', turnstileToken: 'valid-turnstile-token' });
       const res = makeRes();
       await handler(req, res);
       return { res };

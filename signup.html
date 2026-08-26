@@ -23,10 +23,18 @@
       <label class="auth-field">Work Email<input name="email" type="email" autocomplete="email" required><span class="auth-error"></span></label>
       <label class="auth-field">Password<input name="password" type="password" autocomplete="new-password" required><span class="auth-error"></span></label>
     </div>
+    <div id="turnstileContainer" style="margin-top:14px;"></div>
     <button class="auth-button" id="signupSubmit" type="submit">Start Free</button>
   </form>
   <div class="auth-message" id="signupMessage" role="alert"></div>
   <div class="auth-links"><span>Already have an account? <a class="auth-link" href="/login">Log In</a></span><a class="auth-link" href="/pricing.html">View Pricing</a></div>
 </main></div>
+<!-- Explicit render (render=explicit) -- signup-form.js calls
+     turnstile.render() itself once it has fetched the current site key from
+     /api/auth?action=turnstile-config, rather than a hardcoded
+     data-sitekey, so Preview/Production can point at different Turnstile
+     widgets via env vars alone. onload=onTurnstileLoad fires once the API
+     is ready to render. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit" async defer></script>
 <script src="/auth-client.js"></script><script src="/signup-form.js"></script>
 </body></html>
