@@ -326,6 +326,26 @@ Doctrine-confirmation notes from the same smoke test (Active Expansion V1 eligib
 
 ---
 
+### Signup Abuse Remediation V1 — COMPLETED / FOUNDER-PASSED / LIVE IN PRODUCTION (2026-08-26)
+
+**Status: BANKED.** Founder QA: PASS on Preview (`claude/signup-abuse-remediation-v1`, commit `e3233dfadaa0d046e8effe6db2acfe452f66b45b`) and PASS in Production via a real signup at `https://houseaccounts.ai/signup` using the live Turnstile widget. Merged to `main` at `e3233dfadaa0d046e8effe6db2acfe452f66b45b`. Production deployment `dpl_97XUwmLCjiGRadsXziVHchgn7yoP`. Merged-`main` suite: 176 passed, 2 failed (of 178) — the 2 failures are the same pre-existing, unrelated date-relative fixture issue in `scripts/test-repeat-order-follow-up-fixture.js` and `scripts/test-repeat-followup-live-pipeline-e2e.js`, independently confirmed to reproduce identically on unmodified `main` before this work began; not touched, not masked.
+
+**Surfaced by:** two observed automated public-signup spam accounts (e.g. a shortened URL injected into the Name field). Read-only recon confirmed this was ordinary public-form spam, not evidence of compromise — no auth bypass, no injection risk, no cross-org/data exposure found. The recon also confirmed the signup-only flow cannot generate variable provider cost: OpenAI/Firecrawl/Serper calls and monitoring/Queue work all require a real `ha_accounts` row (only created by an explicit, authenticated CSV upload) plus an explicit Research action — a bot that only submits the signup form can never reach any of them.
+
+**Shipped, two independent layers, both enforced before any Supabase Admin API call or database write:**
+- **Server-side signup validation** (`api/lib/signup-validation.js`) — rejects (400, before any account/org is created) an explicit URL/link payload in Name or Company/Organization, and enforces sensible length caps and a bounded `house_accounts` value. Deliberately does not reject a bare domain-looking company name (e.g. "Cars.com") — only an explicit scheme/`www.`/known-shortener link.
+- **Cloudflare Turnstile** (`api/lib/turnstile.js`, widget on `signup.html`/`signup-form.js`) — verified server-side, fails closed on any missing/invalid token or verification error. No requirement added to login. The canonical Production hostname (`houseaccounts.ai`) succeeds; a raw Vercel deployment hostname is intentionally rejected by Turnstile's own domain allowlisting — confirmed in Production QA, not a bug.
+
+**Fixed during Preview QA:** the Turnstile widget could permanently fail to initialize depending on a script-load race (the `async` Turnstile `<script>` tag could call back before `signup-form.js`, a later plain script, had defined the callback it needed — a one-shot invocation with no retry). Fixed by moving the callback definition to an inline placeholder script that always exists before the async tag can fire, plus a two-signal readiness check and a load-failure timeout with a clear user-facing message. See `scripts/test-signup-turnstile-init-live.js` for real-browser coverage of both completion orders and the failure path.
+
+**Explicitly not done in this release, per founder direction:**
+- **No custom rate limiting added.** In-memory/serverless counters were explicitly rejected as inadequate; a real limiter needs durable/platform state and was judged unnecessary unless abuse persists after this fix.
+- **No email-verification implementation.** See the separate, still-open LATER item immediately below.
+
+**Verified-email ownership / account squatting remains a separate, not-implemented LATER item** — signup's `email_confirm:true` Admin API path still permits a registrant to create a live account under an email address they don't control. Deliberately not solved in this release; see "Verified-email ownership / signup account squatting" under LATER for the standing decision to make.
+
+---
+
 ## NOW — Activation & launch quality
 
 Bounded, near-term work that directly completes or polishes what's already live. Ship before or alongside Production monitoring/notification activation.
