@@ -72,16 +72,16 @@ const FIND_SIMILAR_RESPONSE = {
   seeds: [{ seedName: 'Ridgeline Apparel', seedProfile: {}, queries: [], excluded: [] }],
   results: [
     {
-      company: 'Peak Outfitters', seedCompany: 'Ridgeline Apparel',
-      whySimilar: 'Surfaced from a search for Outdoor Retail companies similar to Ridgeline Apparel.',
+      company: 'Peak Outfitters', seedCompany: 'Ridgeline Apparel', relationshipType: 'Industry Peer',
+      whySimilar: 'Surfaced as a peer in the same specific business (Outdoor Retail) as Ridgeline Apparel.',
       similarityEvidence: 'Peak Outfitters and Basecamp Goods are often named as Ridgeline Apparel competitors.',
       similaritySourceUrl: 'https://example.com/competitors',
       reasonToReachOut: { title: 'Peak Outfitters held a ribbon cutting for its new distribution center', whyItMatters: 'A new distribution center typically means fresh onboarding and opening-day merchandise needs.', sourceUrl: 'https://www.businesswire.com/peak-outfitters-new-facility', sourceName: 'businesswire.com' },
       hasCurrentReasonToReachOut: true, allSignals: [{ accountName: 'Peak Outfitters' }], researchCoverage: 'complete', researchError: null
     },
     {
-      company: 'Northface Trail Co', seedCompany: 'Ridgeline Apparel',
-      whySimilar: 'Surfaced from a general competitors/alternatives search for Ridgeline Apparel.',
+      company: 'Northface Trail Co', seedCompany: 'Ridgeline Apparel', relationshipType: 'Nearby Opportunity',
+      whySimilar: 'Nearby Opportunity: found in Ridgeline Apparel\'s own market (Denver, CO) -- geography alone, not a claim of same industry or business type.',
       similarityEvidence: null, similaritySourceUrl: null,
       reasonToReachOut: null, hasCurrentReasonToReachOut: false, allSignals: [], researchCoverage: 'complete', researchError: null
     }
@@ -223,8 +223,11 @@ async function run() {
       assert((await peakCard.locator('.section-text').first().textContent()).includes('Outdoor Retail'), '22) the plain-English similarity explanation renders on the card');
       assert(await peakCard.locator('a.source-link').count() >= 1, '23) evidence/source links render for a grounded candidate');
 
+      assert((await peakCard.locator('.relationship-badge').textContent()) === 'Industry Peer', '23b) REQUIRED (Founder QA Round 2): the candidate\'s relationshipType renders as a plain category badge, not a fabricated number/score');
+
       const northfaceCard = page.locator('.result-card', { hasText: 'Northface Trail Co' });
       assert(await northfaceCard.locator('.rank-badge').count() === 0, '24) a candidate with no current signal does NOT show the grounded-reason badge');
+      assert((await northfaceCard.locator('.relationship-badge').textContent()) === 'Nearby Opportunity', '24b) REQUIRED: a local-lens candidate is labeled "Nearby Opportunity" on the page, never claiming industry similarity');
       assert((await northfaceCard.locator('.no-signal').textContent()).includes('No current, timely public signal'), '25) REQUIRED: the no-signal candidate is represented honestly on the page, not dropped or fabricated');
 
       const excludedNoteText = await page.locator('.excluded-note').textContent();

@@ -235,11 +235,31 @@ export default async function handler(req, res) {
       // separate (founder direction, unchanged): a genuinely similar
       // candidate with no CURRENT signal is still returned, just honestly
       // represented as having none right now.
-      const currentSignals = signals.filter(s => s?.actionabilityStatus?.excludeFromPriorities !== true);
+      // Founder QA Round 2, item 5: among the survivors, pick the BEST
+      // current signal, not just the first one in whatever order
+      // mapSignalsFromModelOutput()'s dedupe/resolve steps happened to
+      // produce -- runResearchPipeline() makes no ordering guarantee of its
+      // own. why_now_score is Core's own existing per-signal priority
+      // score (makeSignal(), api/research-batch.js) -- the same field
+      // dashboard/index.html's getOpportunityScore()/sortDailyReasons()
+      // already sorts Priorities by. Reusing it here is the fix: no new
+      // Prospect-specific ranking rule invented.
+      const currentSignals = signals
+        .filter(s => s?.actionabilityStatus?.excludeFromPriorities !== true)
+        .sort((a, b) => Number(b.why_now_score || b.whyNowScore || 0) - Number(a.why_now_score || a.whyNowScore || 0));
       const topSignal = currentSignals[0] || null;
       return {
         company: candidate.name,
         seedCompany: candidate.seedName,
+        // Founder QA Round 2: relationshipType/matchRank/whySimilar are now
+        // structurally determined by WHICH lens actually surfaced this
+        // candidate (api/lib/lookalike-discovery.js), never a generic
+        // "same industry/general market" claim -- see that file's own
+        // header comment for the full lens/rank design. matchRank is an
+        // internal sort key only (see the final sort below) -- never
+        // rendered to the customer as a number.
+        relationshipType: candidate.relationshipType,
+        matchRank: candidate.matchRank,
         whySimilar: candidate.similarityExplanation,
         similarityEvidence: candidate.evidenceSnippet || null,
         similaritySourceUrl: candidate.sourceUrl || null,
@@ -266,17 +286,28 @@ export default async function handler(req, res) {
       };
     });
 
-    // Rank: candidates with a grounded current Reason to Reach Out first
-    // (founder direction: "Candidates with grounded current commercial
-    // reasons can rank above equally similar candidates without them"),
-    // stable otherwise (Stage A discovery order preserved within each
-    // group).
-    results.sort((a, b) => Number(b.hasCurrentReasonToReachOut) - Number(a.hasCurrentReasonToReachOut));
+    // Rank (Founder QA Round 2, item 4 -- corrected from V1): fit/match
+    // confidence is the PRIMARY ordering dimension, not presence of a
+    // current signal. "A highly credible peer with no current signal
+    // should outrank a weakly related company that happens to have news."
+    // matchRank (0=explicit direct-peer evidence, 1=specific business-type
+    // match, 2=similar footprint, 3=geography-only) is the primary sort
+    // key; a current Reason to Reach Out is only a SECONDARY tie-break
+    // among candidates of otherwise-equal match quality ("if two similarly
+    // strong targets exist, a timely Reason can rank one above the
+    // other") -- never the reverse.
+    results.sort((a, b) => (a.matchRank - b.matchRank) || (Number(b.hasCurrentReasonToReachOut) - Number(a.hasCurrentReasonToReachOut)));
+
+    // matchRank is an internal sort key only -- never surfaced to the
+    // customer as a number (founder direction: avoid fake numerical
+    // precision in the UI). relationshipType (a plain category label) is
+    // what the UI actually renders.
+    const publicResults = results.map(({ matchRank, ...rest }) => rest);
 
     return json(res, 200, {
       ok: true,
       seeds: seedResults,
-      results,
+      results: publicResults,
       excluded: [...seedResults.flatMap(s => s.excluded), ...mergeExcluded],
       missingSeeds,
       candidateCount: results.length

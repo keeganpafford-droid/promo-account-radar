@@ -37,6 +37,8 @@ h1{margin:0 0 6px;font-size:1.7rem}
 .result-top h3{margin:0;font-size:1.15rem}
 .seed-tag{font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .rank-badge{font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;background:#fff8e9;border:1px solid rgba(245,166,35,.35);border-radius:999px;padding:5px 8px;white-space:nowrap}
+.badge-stack{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.relationship-badge{font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;background:#eefdfb;border:1px solid rgba(31,183,174,.3);color:#0f766e;border-radius:999px;padding:5px 8px;white-space:nowrap}
 .section-label{font-family:monospace;font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
 .section-label:first-of-type{margin-top:0}
 .section-text{font-size:.92rem;color:#374151;line-height:1.5}
@@ -46,6 +48,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
 .source-link{font-size:.82rem;color:var(--teal);font-weight:700;text-decoration:none}
 .save-btn{margin-top:14px;border:1px solid var(--line);background:#fff;color:var(--navy);border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer;font-size:.85rem}
 .save-btn[disabled]{opacity:.6;cursor:not-allowed}
+.save-note{margin-top:6px;font-size:.76rem;color:var(--muted)}
 .empty-state{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;text-align:center;color:var(--muted)}
 .excluded-note{margin-top:10px;font-size:.8rem;color:var(--muted)}
 .missing-website-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.06);margin-bottom:14px}
@@ -160,7 +163,10 @@ h1{margin:0 0 6px;font-size:1.7rem}
       <div class="result-card">
         <div class="result-top">
           <div><div class="seed-tag">Like ${esc(r.seedCompany)}</div><h3>${esc(r.company)}</h3></div>
-          ${r.hasCurrentReasonToReachOut ? '<span class="rank-badge">Grounded reason to reach out</span>' : ''}
+          <div class="badge-stack">
+            ${r.relationshipType ? `<span class="relationship-badge">${esc(r.relationshipType)}</span>` : ''}
+            ${r.hasCurrentReasonToReachOut ? '<span class="rank-badge">Grounded reason to reach out</span>' : ''}
+          </div>
         </div>
         <div class="section-label">Why HA thinks this resembles ${esc(r.seedCompany)}</div>
         <div class="section-text">${esc(r.whySimilar)}</div>
@@ -173,6 +179,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
           ${reason.sourceUrl ? `<a class="source-link" href="${esc(reason.sourceUrl)}" target="_blank" rel="noopener">${esc(reason.sourceName||'Source')}</a>` : ''}
         ` : `<div class="no-signal">No current, timely public signal was found for ${esc(r.company)} today. It may still be a genuinely similar company worth pursuing — House Accounts just doesn't have a grounded reason to reach out to them right now.</div>`}
         <button class="save-btn" data-name="${esc(r.company)}">Save to Target Accounts</button>
+        <div class="save-note">Preview-only save for now — a permanent Target Accounts destination is coming; this does not create ongoing monitoring.</div>
       </div>
     `;
   }
