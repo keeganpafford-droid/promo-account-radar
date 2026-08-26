@@ -175,9 +175,9 @@ function fakeRes() {
 // Stage A/B pipeline unaffected by the new identity-gate; a seed with NO
 // known website is its own dedicated fixture below (WEBSITELESS_SEED_NAME).
 const ORG_ACCOUNTS = [
-  { account_name: 'Ridgeline Apparel', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'ridgeline.com' } },
-  { account_name: 'Summit Gear Co', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'summitgear.com' } },
-  { account_name: 'No Website Co', industry: 'Outdoor Retail', metrics: {}, raw_data: {} }
+  { id: 'acct-ridgeline', account_name: 'Ridgeline Apparel', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'ridgeline.com' } },
+  { id: 'acct-summit', account_name: 'Summit Gear Co', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'summitgear.com' } },
+  { id: 'acct-no-website', account_name: 'No Website Co', industry: 'Outdoor Retail', metrics: {}, raw_data: {} }
 ];
 const WEBSITELESS_SEED_NAME = 'No Website Co';
 
@@ -413,6 +413,7 @@ async function run() {
     assert(res._status === 200, `B9) a missing-website seed returns 200 with a guided state, not a hard error (got ${res._status})`);
     assert(res._body?.ok === false, 'B9) the response is explicitly ok:false so the client can distinguish this from a successful result');
     assert(Array.isArray(res._body?.missingWebsiteSeeds) && res._body.missingWebsiteSeeds.some(s => s.name === WEBSITELESS_SEED_NAME), `B9) REQUIRED: the specific seed missing a website is named back (got ${JSON.stringify(res._body?.missingWebsiteSeeds)})`);
+    assert(res._body.missingWebsiteSeeds[0].accountId === 'acct-no-website', `B9) REQUIRED (Founder QA identity correction): the real, resolved ha_accounts.id is carried back too -- api/account-website.js writes by this exact id, never a broader name match (got "${res._body.missingWebsiteSeeds[0].accountId}")`);
     assert(!/column|raw_data|jsonb|schema/i.test(res._body?.error || ''), `B9) REQUIRED: the message is plain and customer-facing, no database terminology (got "${res._body?.error}")`);
     assert(!fetchImpl.calls.some(u => u.includes('google.serper.dev')), 'B9) REQUIRED (cost gate): zero Serper calls before the required seed identity is present');
     assert(!fetchImpl.calls.some(u => u.includes('api.openai.com')), 'B9) REQUIRED (cost gate): zero OpenAI calls before the required seed identity is present');

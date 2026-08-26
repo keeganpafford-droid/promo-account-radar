@@ -223,12 +223,12 @@ h1{margin:0 0 6px;font-size:1.7rem}
     const list = document.getElementById('missingWebsiteList');
     section.style.display = 'block';
     list.innerHTML = missing.map(m => `
-      <div class="missing-website-card" data-account="${esc(m.name)}">
+      <div class="missing-website-card" data-account-id="${esc(m.accountId)}">
         <h3>Add ${esc(m.name)}'s website</h3>
         <p>A website helps House Accounts identify the right company and find more accurate matches.</p>
         <div class="missing-website-row">
-          <input type="text" placeholder="companywebsite.com" data-account-input="${esc(m.name)}">
-          <button class="btn save-website-btn" data-account="${esc(m.name)}" type="button">Save &amp; Continue</button>
+          <input type="text" placeholder="companywebsite.com">
+          <button class="btn save-website-btn" data-account-id="${esc(m.accountId)}" type="button">Save &amp; Continue</button>
         </div>
         <div class="missing-website-error"></div>
       </div>
@@ -239,9 +239,14 @@ h1{margin:0 0 6px;font-size:1.7rem}
   }
 
   async function saveMissingWebsite(btn){
-    const accountName = btn.dataset.account;
+    // accountId (not accountName): api/find-similar-companies.js already
+    // resolved this seed to one specific, real ha_accounts row -- writing
+    // by that same id (rather than re-matching by name, org-wide) is what
+    // keeps this save from ever landing on a different rep's unrelated
+    // company that happens to share a display name.
+    const accountId = btn.dataset.accountId;
     const card = btn.closest('.missing-website-card');
-    const input = card.querySelector('input[data-account-input]');
+    const input = card.querySelector('input');
     const errorEl = card.querySelector('.missing-website-error');
     errorEl.style.display = 'none'; errorEl.textContent = '';
     const website = (input.value || '').trim();
@@ -252,7 +257,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
       if(!headers) return;
       const res = await fetch('/api/account-website', {
         method: 'POST', headers,
-        body: JSON.stringify({ accountName, website })
+        body: JSON.stringify({ accountId, website })
       });
       const data = await res.json().catch(()=>({}));
       if(!res.ok) throw new Error(data.error || 'Could not save this website.');

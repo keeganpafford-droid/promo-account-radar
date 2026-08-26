@@ -14,20 +14,33 @@
 // Monitoring Identity resolution, the dashboard's own website display) as
 // well as this feature -- not a parallel field only this page reads.
 //
-// An account is identified by (organization, account_name) here, matching
-// the SAME identity convention api/get-dashboard.js already uses to merge
-// potentially-multiple ha_accounts rows sharing one name into a single
-// "account" the rep sees -- see byAccount.set(a.account_name, ...) there.
-// A website save therefore updates every matching row for the caller's
-// organization, so every view of this account (dashboard, Find More Like
-// Them, monitoring) sees the same website immediately, not just one of
-// several duplicate rows.
+// IDENTITY (corrected 2026-08-26, Founder QA -- an earlier version of this
+// file matched by account_name across the whole organization and is WRONG,
+// left here as the record of why): api/find-similar-companies.js's own
+// account fetch is org-wide (every active user's ha_accounts, matching
+// api/get-dashboard.js's TEAM-view scope), not scoped to one rep. Two
+// different reps can legitimately have two different companies that happen
+// to share a display name (a common risk with franchises/generic business
+// names) -- name-based fan-out would silently write one rep's entered
+// website onto a different, unrelated company. get-dashboard.js's own
+// byAccount.set(a.account_name, ...) dedup-by-name is a DISPLAY
+// convenience for one rep's own repeat-upload history; it is not an
+// identity guarantee this endpoint may reuse for a write. Every other
+// account-metadata write in this codebase (dashboard/index.html's
+// saveAccountMetadataEdit()/saveCurrentUpload()) identifies the account by
+// (uploadId, account_name) -- ha_accounts's own unique constraint -- never
+// by name alone, org-wide. This endpoint now matches that precedent: it
+// writes to exactly the ONE ha_accounts row api/find-similar-companies.js
+// itself already resolved as "the seed" (its real, stable id, passed
+// through in missingWebsiteSeeds[].accountId), verified to belong to the
+// caller's own organization. It does not fan out to any other row that
+// happens to share the same name, including this same rep's own older
+// duplicate uploads -- narrower than the previous version, deliberately.
 //
 // Read-modify-write, not a raw column replace: raw_data carries many other
 // keys (contacts, location, intelligenceMode, ...) a PATCH with only
-// {website} would silently destroy. Each matching row's current raw_data is
-// fetched immediately before its own write and merged, never a stale
-// shared copy across rows.
+// {website} would silently destroy. The row's current raw_data is fetched
+// immediately before the write and merged.
 import { normalizeDomain } from './lib/monitoring-identity.js';
 
 function json(res, status, body) { res.setHeader('Cache-Control', 'no-store, max-age=0'); return res.status(status).json(body); }
@@ -84,25 +97,29 @@ export default async function handler(req, res) {
     if (!ctx) return json(res, 401, { error: 'Authentication required' });
 
     const body = req.body || {};
-    const accountName = clean(body.accountName);
-    if (!accountName) return json(res, 400, { error: 'accountName is required' });
+    const accountId = clean(body.accountId);
+    if (!accountId) return json(res, 400, { error: 'accountId is required' });
 
     const normalized = normalizeDomain(body.website);
     if (!normalized) return json(res, 400, { error: 'Please enter a valid website (e.g. companywebsite.com).' });
 
     if (!ctx.userIds.length) return json(res, 404, { error: 'Account not found.' });
 
-    const rows = await sb(`ha_accounts?account_name=eq.${encodeURIComponent(accountName)}&user_id=${inFilter(ctx.userIds)}&select=id,raw_data`);
-    if (!Array.isArray(rows) || !rows.length) return json(res, 404, { error: 'Account not found.' });
+    // Scoped to the caller's own organization (org-isolation guard,
+    // unchanged) AND to the exact row id the seed already resolved to --
+    // never a broader name match. limit=1 is structural, not a safety net:
+    // id is ha_accounts's own primary key, so at most one row can ever
+    // match.
+    const rows = await sb(`ha_accounts?id=eq.${encodeURIComponent(accountId)}&user_id=${inFilter(ctx.userIds)}&select=id,raw_data&limit=1`);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return json(res, 404, { error: 'Account not found.' });
 
-    await Promise.all(rows.map(row => {
-      const rawData = (row.raw_data && typeof row.raw_data === 'object') ? row.raw_data : {};
-      return sb(`ha_accounts?id=eq.${encodeURIComponent(row.id)}`, {
-        method: 'PATCH',
-        prefer: 'return=minimal',
-        body: JSON.stringify({ raw_data: { ...rawData, website: normalized } })
-      });
-    }));
+    const rawData = (row.raw_data && typeof row.raw_data === 'object') ? row.raw_data : {};
+    await sb(`ha_accounts?id=eq.${encodeURIComponent(row.id)}`, {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ raw_data: { ...rawData, website: normalized } })
+    });
 
     return json(res, 200, { ok: true, website: normalized });
   } catch (err) {

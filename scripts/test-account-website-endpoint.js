@@ -4,12 +4,26 @@
 // unmodified default export (same convention as
 // scripts/test-whitespace-map-endpoint.js), not a reconstructed helper.
 //
+// IDENTITY MODEL (Founder QA correction, same day): an earlier version of
+// this endpoint matched by account_name across the whole organization.
+// That was rejected on inspection -- api/find-similar-companies.js's own
+// account fetch is org-wide (every active user in the org), and two
+// different reps can legitimately have two DIFFERENT companies that happen
+// to share a display name, so a name-based write could silently corrupt an
+// unrelated rep's account. Every other account-metadata write in this
+// codebase (dashboard/index.html's saveAccountMetadataEdit()) identifies
+// the account by (uploadId, account_name) -- never by name alone,
+// org-wide. This endpoint now matches that precedent: it writes to exactly
+// the ONE ha_accounts row api/find-similar-companies.js already resolved
+// as "the seed" (its real id), verified to belong to the caller's own
+// organization -- never a broader name-based fan-out.
+//
 // Covers: auth boundary, input validation (reusing the existing
 // normalizeDomain() normalizer, not a new one), the read-modify-write that
-// must never clobber other raw_data keys, updating EVERY ha_accounts row
-// sharing an account name within the org (the same (organization,
-// account_name) identity convention api/get-dashboard.js already uses),
-// and organization isolation.
+// must never clobber other raw_data keys, id-scoped identity (never
+// touching another row that merely shares the same account name -- same
+// rep's own duplicate upload, or a different rep's unrelated company), and
+// organization isolation.
 //
 // Usage: node scripts/test-account-website-endpoint.js
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
@@ -38,15 +52,17 @@ function makeReq(body, { withAuth = true } = {}) {
 }
 
 const ORG_A = 'org-a';
-const ORG_B = 'org-b';
 const USER_A = 'user-a';
 
-// ORG_A's own ha_accounts rows -- two rows sharing one account_name
-// (simulating two uploads), and one belonging to ORG_B under the SAME
-// account_name -- the org-isolation fixture.
+// Two DISTINCT companies that both happen to be named "Ridgeline Apparel"
+// -- acct-a1 is the caller's own seed row (what MUST be updated); acct-a2
+// is a genuinely different company under a DIFFERENT rep in the SAME
+// organization sharing the same name by coincidence (must NEVER be
+// touched); acct-b1 belongs to a different organization entirely (the
+// org-isolation fixture).
 const ACCOUNTS_STORE = [
   { id: 'acct-a1', account_name: 'Ridgeline Apparel', user_id: USER_A, raw_data: { contacts: [{ name: 'Jordan Reyes' }], location: 'Denver, CO' } },
-  { id: 'acct-a2', account_name: 'Ridgeline Apparel', user_id: USER_A, raw_data: { intelligenceMode: 'historical' } },
+  { id: 'acct-a2', account_name: 'Ridgeline Apparel', user_id: 'user-a-colleague', raw_data: { location: 'Unrelated, TX' } },
   { id: 'acct-b1', account_name: 'Ridgeline Apparel', user_id: 'user-b', raw_data: {} }
 ];
 let patchCalls = [];
@@ -56,17 +72,15 @@ function mockFetch() {
     const u = String(url);
     if (u.includes('/auth/v1/user')) return jsonResponse({ id: 'auth-user-a', email: 'rep@example.com' });
     if (u.includes('/rest/v1/ha_users') && u.includes('auth_user_id=eq.')) return jsonResponse([{ id: USER_A, organization_id: ORG_A, status: 'active' }]);
-    if (u.includes('/rest/v1/ha_users') && u.includes('organization_id=eq.')) return jsonResponse([{ id: USER_A, status: 'active' }]);
+    // The org includes USER_A and their colleague (acct-a2's owner) -- both
+    // active members of the SAME organization as the caller.
+    if (u.includes('/rest/v1/ha_users') && u.includes('organization_id=eq.')) return jsonResponse([{ id: USER_A, status: 'active' }, { id: 'user-a-colleague', status: 'active' }]);
     if (u.includes('/rest/v1/ha_accounts') && (init.method || 'GET') === 'GET') {
-      // The real endpoint scopes by user_id=in.(...ctx.userIds) -- assert
-      // ORG_B's row id never even appears in the candidate set the handler
-      // could patch, by filtering the fixture store exactly like PostgREST
-      // would against the actual filter string sent.
-      const nameMatch = decodeURIComponent(u).match(/account_name=eq\.([^&]+)/);
-      const name = nameMatch ? nameMatch[1] : '';
+      const idMatch = decodeURIComponent(u).match(/id=eq\.([^&]+)/);
+      const id = idMatch ? idMatch[1] : '';
       const inMatch = u.match(/user_id=in\.\(([^)]*)\)/);
       const allowedIds = inMatch ? inMatch[1].split(',').map(s => s.replace(/"/g, '')) : [];
-      const rows = ACCOUNTS_STORE.filter(a => a.account_name === name && allowedIds.includes(a.user_id));
+      const rows = ACCOUNTS_STORE.filter(a => a.id === id && allowedIds.includes(a.user_id));
       return jsonResponse(rows.map(r => ({ id: r.id, raw_data: r.raw_data })));
     }
     if (u.includes('/rest/v1/ha_accounts') && init.method === 'PATCH') {
@@ -89,16 +103,16 @@ async function run() {
     {
       global.fetch = mockFetch();
       const res = makeRes();
-      await handler(makeReq({ accountName: 'Ridgeline Apparel', website: 'ridgeline.com' }, { withAuth: false }), res);
+      await handler(makeReq({ accountId: 'acct-a1', website: 'ridgeline.com' }, { withAuth: false }), res);
       assert(res.statusCode === 401, `REQUIRED: no Authorization header -> 401 (got ${res.statusCode})`);
     }
 
-    // 2. Missing accountName.
+    // 2. Missing accountId.
     {
       global.fetch = mockFetch();
       const res = makeRes();
       await handler(makeReq({ website: 'ridgeline.com' }), res);
-      assert(res.statusCode === 400, `REQUIRED: missing accountName -> 400 (got ${res.statusCode})`);
+      assert(res.statusCode === 400, `REQUIRED: missing accountId -> 400 (got ${res.statusCode})`);
     }
 
     // 3. Invalid/empty website is rejected with a plain, customer-facing
@@ -106,45 +120,54 @@ async function run() {
     {
       global.fetch = mockFetch();
       const res = makeRes();
-      await handler(makeReq({ accountName: 'Ridgeline Apparel', website: '   ' }), res);
+      await handler(makeReq({ accountId: 'acct-a1', website: '   ' }), res);
       assert(res.statusCode === 400, `REQUIRED: an empty website is rejected with 400 (got ${res.statusCode})`);
       assert(!/column|raw_data|jsonb|schema/i.test(res.body?.error || ''), `REQUIRED: the rejection message never exposes database terminology (got "${res.body?.error}")`);
     }
 
-    // 4. Account not found for this org.
+    // 4. Unknown/nonexistent accountId.
     {
       global.fetch = mockFetch();
       const res = makeRes();
-      await handler(makeReq({ accountName: 'Nonexistent Co', website: 'nonexistent.com' }), res);
-      assert(res.statusCode === 404, `REQUIRED: an account name with no matching org row -> 404 (got ${res.statusCode})`);
+      await handler(makeReq({ accountId: 'acct-does-not-exist', website: 'nonexistent.com' }), res);
+      assert(res.statusCode === 404, `REQUIRED: an unrecognized accountId -> 404 (got ${res.statusCode})`);
     }
 
-    // 5. Happy path: canonical persistence + read-modify-write + updates
-    // every row sharing this account name within the org (never a second,
-    // parallel storage model).
+    // 5. Happy path: canonical persistence + read-modify-write, scoped to
+    // the exact id -- never a broader name-based write.
     {
       patchCalls = [];
       global.fetch = mockFetch();
       const res = makeRes();
-      await handler(makeReq({ accountName: 'Ridgeline Apparel', website: 'https://Ridgeline.com/about' }), res);
+      await handler(makeReq({ accountId: 'acct-a1', website: 'https://Ridgeline.com/about' }), res);
       assert(res.statusCode === 200 && res.body?.ok === true, `REQUIRED: a valid save succeeds (got ${res.statusCode}, ${JSON.stringify(res.body)})`);
       assert(res.body.website === 'ridgeline.com', `REQUIRED: the website is normalized via the existing normalizeDomain() utility, not stored as raw user input (got "${res.body.website}")`);
-      assert(patchCalls.length === 2, `REQUIRED: BOTH ha_accounts rows sharing this org's "Ridgeline Apparel" name are updated, not just one (got ${patchCalls.length} PATCH calls)`);
-      assert(!patchCalls.some(c => c.id === 'acct-b1'), 'REQUIRED (org isolation): ORG_B\'s row sharing the same account name is never patched');
-      const patchForA1 = patchCalls.find(c => c.id === 'acct-a1');
-      assert(patchForA1.body.raw_data.website === 'ridgeline.com', 'REQUIRED: the new website is written into raw_data.website -- the confirmed canonical location, not a new storage model');
-      assert(JSON.stringify(patchForA1.body.raw_data.contacts) === JSON.stringify([{ name: 'Jordan Reyes' }]) && patchForA1.body.raw_data.location === 'Denver, CO', 'REQUIRED (read-modify-write): every other pre-existing raw_data key on this row survives the save untouched');
-      const patchForA2 = patchCalls.find(c => c.id === 'acct-a2');
-      assert(patchForA2.body.raw_data.intelligenceMode === 'historical' && patchForA2.body.raw_data.website === 'ridgeline.com', 'REQUIRED: the second row\'s own distinct raw_data is preserved independently while also gaining the new website');
+      assert(patchCalls.length === 1, `REQUIRED: exactly ONE row is patched -- the specific seed id, never a name-based fan-out (got ${patchCalls.length} PATCH calls)`);
+      assert(patchCalls[0].id === 'acct-a1', `REQUIRED: the patched row is exactly the requested accountId (got "${patchCalls[0].id}")`);
+      assert(patchCalls[0].body.raw_data.website === 'ridgeline.com', 'REQUIRED: the new website is written into raw_data.website -- the confirmed canonical location, not a new storage model');
+      assert(JSON.stringify(patchCalls[0].body.raw_data.contacts) === JSON.stringify([{ name: 'Jordan Reyes' }]) && patchCalls[0].body.raw_data.location === 'Denver, CO', 'REQUIRED (read-modify-write): every other pre-existing raw_data key on this row survives the save untouched');
     }
 
-    // 6. Org isolation, directly: ORG_A's caller can never write to a row
-    // that belongs only to ORG_B, even under an identical account name --
-    // proven by construction above (5), reasserted here as its own named
-    // check for the required-coverage list.
+    // 6. REQUIRED (the actual reported architecture risk): a DIFFERENT,
+    // genuinely unrelated company under a colleague in the SAME
+    // organization that merely happens to share the account name is never
+    // touched -- the fix this whole correction exists for.
     {
-      const orgBOnlyRow = ACCOUNTS_STORE.find(a => a.id === 'acct-b1');
-      assert(orgBOnlyRow.raw_data.website === undefined, 'REQUIRED (org isolation): ORG_B\'s row was never modified by ORG_A\'s save');
+      const otherAccount = ACCOUNTS_STORE.find(a => a.id === 'acct-a2');
+      assert(otherAccount.raw_data.website === undefined, 'REQUIRED: a same-org, same-name, but genuinely DIFFERENT company (different rep, different account) is never modified by another rep\'s website save');
+      assert(otherAccount.raw_data.location === 'Unrelated, TX', 'REQUIRED: that unrelated account\'s own real data is completely undisturbed');
+    }
+
+    // 7. Org isolation: a caller can never write to a row belonging to a
+    // different organization, even by guessing/reusing its id.
+    {
+      patchCalls = [];
+      global.fetch = mockFetch();
+      const res = makeRes();
+      await handler(makeReq({ accountId: 'acct-b1', website: 'someother.com' }), res);
+      assert(res.statusCode === 404, `REQUIRED (org isolation): a request for another organization's account id is rejected as not found, not fulfilled (got ${res.statusCode})`);
+      assert(patchCalls.length === 0, 'REQUIRED (org isolation): no PATCH is ever issued for a row outside the caller\'s organization');
+      assert(ACCOUNTS_STORE.find(a => a.id === 'acct-b1').raw_data.website === undefined, 'REQUIRED (org isolation): ORG_B\'s row is left completely untouched');
     }
   } finally {
     global.fetch = realFetch;

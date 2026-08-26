@@ -131,7 +131,7 @@ async function withPage(baseUrl, run) {
       if (!websiteSaved) {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
           ok: false,
-          missingWebsiteSeeds: [{ name: 'Ridgeline Apparel' }],
+          missingWebsiteSeeds: [{ name: 'Ridgeline Apparel', accountId: 'acct-ridgeline-1' }],
           error: 'A website helps House Accounts identify the right company and find more accurate matches.'
         }) });
       }
@@ -209,7 +209,7 @@ async function run() {
       // real result cards from the (now website-aware) second call.
       await page.waitForSelector('.result-card', { timeout: 10000 });
       assert(accountWebsiteCalls.length === 1, '14) REQUIRED: saving calls the new /api/account-website endpoint exactly once');
-      assert(accountWebsiteCalls[0]?.accountName === 'Ridgeline Apparel' && accountWebsiteCalls[0]?.website === 'ridgeline.com', `15) the save call carries the correct account name and the entered website (got ${JSON.stringify(accountWebsiteCalls[0])})`);
+      assert(accountWebsiteCalls[0]?.accountId === 'acct-ridgeline-1' && accountWebsiteCalls[0]?.website === 'ridgeline.com', `15) REQUIRED (Founder QA identity correction): the save call carries the specific resolved accountId (never just the account name) and the entered website (got ${JSON.stringify(accountWebsiteCalls[0])})`);
       assert(await page.locator('.missing-website-card').count() === 0, '16) the missing-website prompt is gone once resolved');
       assert(findSimilarCalls.length === 2, '17) REQUIRED: the lookalike search continues automatically after the save -- a second call happens with no further click from the user');
       assert(JSON.stringify(findSimilarCalls[1]?.seedAccountNames) === JSON.stringify(sentSeeds), '18) REQUIRED: the continued search reuses the exact same seed selection -- the workflow is not restarted');

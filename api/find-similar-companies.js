@@ -109,6 +109,14 @@ function toSeedAccount(row = {}) {
   const metrics = row.metrics && typeof row.metrics === 'object' ? row.metrics : {};
   const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
   return {
+    // id (2026-08-26, Founder QA correction): the specific ha_accounts row
+    // this seed actually resolved to. Carried through to missingWebsiteSeeds
+    // so api/account-website.js can write to THIS exact row -- see that
+    // file's header comment for why a broader name-based fan-out was
+    // rejected (two different reps can legitimately have two different
+    // companies that happen to share a display name; this endpoint's own
+    // account fetch is already org-wide, not scoped to one rep).
+    id: clean(row.id),
     name: clean(row.account_name),
     industry: clean(row.industry || metrics.industry || raw.industry || ''),
     location: clean(metrics.cityState || metrics.location || raw.location || ''),
@@ -138,7 +146,7 @@ export default async function handler(req, res) {
     // candidate that is already one of this org's own customers is never
     // suggested as "net-new."
     const orgAccounts = ctx.userIds.length
-      ? await sb(`ha_accounts?user_id=${inFilter(ctx.userIds)}&select=account_name,industry,metrics,raw_data&limit=5000`)
+      ? await sb(`ha_accounts?user_id=${inFilter(ctx.userIds)}&select=id,account_name,industry,metrics,raw_data&limit=5000`)
       : [];
     const accountsByNormalizedName = new Map((orgAccounts || []).map(a => [normalizeCompanyName(a.account_name), a]));
     const existingCustomerNames = (orgAccounts || []).map(a => a.account_name).filter(Boolean);
@@ -166,7 +174,7 @@ export default async function handler(req, res) {
     if (missingWebsiteSeeds.length) {
       return json(res, 200, {
         ok: false,
-        missingWebsiteSeeds: missingWebsiteSeeds.map(seed => ({ name: seed.name })),
+        missingWebsiteSeeds: missingWebsiteSeeds.map(seed => ({ name: seed.name, accountId: seed.id })),
         error: "A website helps House Accounts identify the right company and find more accurate matches."
       });
     }
