@@ -320,11 +320,21 @@ async function run() {
         // as it does in production. why_this_matters is supplied explicitly
         // (rather than relying on the deterministic fallback generator) so
         // this test is not coupled to that generator's exact wording.
+        // publicationDate (Founder QA Round 1 correction): this signal's
+        // canonical type (FACILITY_EXPANSION) is an "ongoing" business
+        // change, not event-like, so it is judged by publicationDate + the
+        // 180-day recency ceiling (computeActionability()), never an
+        // event_date. Without a real, recent publicationDate this signal is
+        // legitimately "ongoing-undated" and MUST NOT be shown as current --
+        // see B12/B13 below for the dedicated stale-vs-current coverage;
+        // this fixture is simply made realistically current so B5 continues
+        // to exercise a genuinely current, well-dated grounded signal.
         'Peak Outfitters': {
           accountName: 'Peak Outfitters', signal_type: 'Growth / Expansion',
           concrete_trigger: 'Peak Outfitters held a ribbon cutting for its new distribution center',
           business_context: 'Peak Outfitters opened a new flagship store and expanded distribution center.',
           why_this_matters: 'A new flagship store and distribution center typically means more on-site staff and a fresh need for branded merchandise and grand-opening giveaways.',
+          publicationDate: new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10),
           sourceUrl: 'https://www.businesswire.com/peak-outfitters-new-facility', confidence: 82
         }
       }
@@ -445,6 +455,80 @@ async function run() {
     assert(Boolean(accountsCall), 'B11) sanity: the org-accounts fetch happened');
     assert(!/[?&]select=[^&]*\bwebsite\b/.test(decodeURIComponent(accountsCall || '')), `B11) REQUIRED (regression): the ha_accounts query never selects a "website" column -- it does not exist and previously 400'd every request (select was: ${decodeURIComponent(accountsCall || '')})`);
     assert(res._status === 200 && res._body?.ok !== false, `B11) REQUIRED: a seed with a real raw_data.website value proceeds normally, no longer blocked by the schema bug (got ${res._status}, ${JSON.stringify(res._body).slice(0, 200)})`);
+  }
+
+  // B12/B13) Founder QA Round 1 correction (2026-08-26): "grounded does not
+  // mean timely." Fixed, far-past dates rather than a wall-clock-relative
+  // boundary (per founder direction) -- these stay stale for the entire
+  // realistic lifetime of this codebase, so the test cannot silently start
+  // passing/failing as real time advances the way the reported production
+  // bug did (a 2017 anniversary surfacing as "current" nine years later).
+  {
+    // B12a) An event-like signal (a trade show) with a real event_date far
+    // in the past -- must NOT become the "current reason to reach out."
+    const staleEventLike = {
+      accountName: 'Peak Outfitters', signal_type: 'Trade Show / Event',
+      concrete_trigger: 'Peak Outfitters exhibited at the Organic Produce Summit trade show',
+      business_context: 'Peak Outfitters exhibited at the Organic Produce Summit trade show.',
+      why_this_matters: 'Trade show attendance is a real evidenced fact.',
+      event_date: '2019-04-15',
+      sourceUrl: 'https://www.businesswire.com/peak-outfitters-new-facility', confidence: 80
+    };
+    const fetchImpl = createFullMock({ synthesisForCandidate: { 'Peak Outfitters': staleEventLike } });
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: ['Ridgeline Apparel'] });
+    const res = fakeRes();
+    await handler(req, res);
+    const peak = res._body?.results?.find(r => r.company === 'Peak Outfitters');
+    assert(Boolean(peak), 'B12a) sanity: the candidate still appears in results');
+    assert(peak.hasCurrentReasonToReachOut === false && peak.reasonToReachOut === null, `B12a) REQUIRED: a real, sourced, but multi-year-stale event-like signal (2019 trade show) is never shown as a CURRENT reason to reach out (got ${JSON.stringify(peak?.reasonToReachOut)})`);
+    assert(Array.isArray(peak.allSignals) && peak.allSignals.length === 1, 'B12a) the underlying grounded fact is still returned in allSignals -- it is filtered from "current," not deleted');
+  }
+  {
+    // B12b) An "ongoing" business-change signal (an acquisition -- not
+    // event-like, so it is judged by publicationDate + the existing 180-day
+    // recency ceiling, not an event_date) published more than 180 days ago
+    // -- must NOT become the "current reason to reach out" either.
+    const staleOngoing = {
+      accountName: 'Peak Outfitters', signal_type: 'Acquisition / Funding',
+      concrete_trigger: 'Peak Outfitters acquired a regional competitor',
+      business_context: 'Peak Outfitters announced the acquisition of a regional competitor.',
+      why_this_matters: 'An acquisition is a real evidenced fact.',
+      publicationDate: '2023-01-01',
+      sourceUrl: 'https://www.businesswire.com/peak-outfitters-new-facility', confidence: 80
+    };
+    const fetchImpl = createFullMock({ synthesisForCandidate: { 'Peak Outfitters': staleOngoing } });
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: ['Ridgeline Apparel'] });
+    const res = fakeRes();
+    await handler(req, res);
+    const peak = res._body?.results?.find(r => r.company === 'Peak Outfitters');
+    assert(peak?.hasCurrentReasonToReachOut === false && peak.reasonToReachOut === null, `B12b) REQUIRED: a real, sourced, but stale (>180 days) ongoing-type signal (an old acquisition) is never shown as a CURRENT reason to reach out (got ${JSON.stringify(peak?.reasonToReachOut)})`);
+  }
+  {
+    // B13) Control: a genuinely current event-like signal (a recent-past
+    // trade show, inside the existing 45-day follow-up window) DOES survive
+    // as the current reason to reach out, and its real event date is
+    // surfaced in the response -- the fix filters stale signals, it does
+    // not also suppress genuinely current ones.
+    const recentDate = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+    const currentEventLike = {
+      accountName: 'Peak Outfitters', signal_type: 'Trade Show / Event',
+      concrete_trigger: 'Peak Outfitters exhibited at the Organic Produce Summit trade show',
+      business_context: 'Peak Outfitters exhibited at the Organic Produce Summit trade show.',
+      why_this_matters: 'Trade show attendance signals active market engagement worth a timely outreach.',
+      event_date: recentDate,
+      sourceUrl: 'https://www.businesswire.com/peak-outfitters-new-facility', confidence: 80
+    };
+    const fetchImpl = createFullMock({ synthesisForCandidate: { 'Peak Outfitters': currentEventLike } });
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: ['Ridgeline Apparel'] });
+    const res = fakeRes();
+    await handler(req, res);
+    const peak = res._body?.results?.find(r => r.company === 'Peak Outfitters');
+    assert(peak?.hasCurrentReasonToReachOut === true && Boolean(peak.reasonToReachOut), `B13) REQUIRED: a genuinely recent event-like signal still surfaces as a current reason to reach out (got ${JSON.stringify(peak?.reasonToReachOut)})`);
+    assert(Boolean(peak.reasonToReachOut.eventDate), `B13) REQUIRED: the real event date Core already resolved is surfaced in the response (materially helps user trust) -- got ${JSON.stringify(peak.reasonToReachOut.eventDate)}`);
+    assert(peak.reasonToReachOut.actionabilityLabel === 'Recent event', `B13) the actionability label is passed through as-is from Core's own computeActionability(), never reformatted (got "${peak.reasonToReachOut.actionabilityLabel}")`);
   }
 }
 

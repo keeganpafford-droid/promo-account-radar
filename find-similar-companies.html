@@ -42,6 +42,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
 .section-text{font-size:.92rem;color:#374151;line-height:1.5}
 .evidence{background:#F7F8FA;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.85rem;color:#374151;font-style:italic}
 .no-signal{color:var(--muted);font-size:.88rem;font-style:italic}
+.reason-date{color:var(--muted);font-size:.8rem;margin:2px 0 6px}
 .source-link{font-size:.82rem;color:var(--teal);font-weight:700;text-decoration:none}
 .save-btn{margin-top:14px;border:1px solid var(--line);background:#fff;color:var(--navy);border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer;font-size:.85rem}
 .save-btn[disabled]{opacity:.6;cursor:not-allowed}
@@ -168,6 +169,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
         ${reason ? `
           <div class="section-text"><strong>${esc(reason.title)}</strong></div>
           <div class="section-text">${esc(reason.whyItMatters)}</div>
+          ${(reason.eventDate || reason.publishedAt) ? `<div class="reason-date">${reason.eventDate ? `Event date: ${esc(reason.eventDate)}` : `Published: ${esc(reason.publishedAt)}`}</div>` : ''}
           ${reason.sourceUrl ? `<a class="source-link" href="${esc(reason.sourceUrl)}" target="_blank" rel="noopener">${esc(reason.sourceName||'Source')}</a>` : ''}
         ` : `<div class="no-signal">No current, timely public signal was found for ${esc(r.company)} today. It may still be a genuinely similar company worth pursuing — House Accounts just doesn't have a grounded reason to reach out to them right now.</div>`}
         <button class="save-btn" data-name="${esc(r.company)}">Save to Target Accounts</button>

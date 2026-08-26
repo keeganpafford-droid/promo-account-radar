@@ -218,10 +218,25 @@ export default async function handler(req, res) {
 
     const results = researched.map(({ candidate, pipelineResult }) => {
       const signals = Array.isArray(pipelineResult.signals) ? pipelineResult.signals : [];
-      // Similarity and timing are different (founder direction): a
-      // genuinely similar company is never dropped merely because no
-      // timely signal exists today -- it is represented honestly instead.
-      const topSignal = signals[0] || null;
+      // Founder QA correction (2026-08-26, Round 1): grounded does not mean
+      // timely. A signal can be a real, sourced fact (a 2017 anniversary, a
+      // 2024 trade show, a Nov-2025 acquisition) without being CURRENT
+      // today -- this endpoint previously took signals[0] with no regard
+      // for that distinction, so an old grounded fact could be shown as a
+      // "current reason to reach out" alongside a live one. Core already
+      // computes this exact judgment for every signal via
+      // computeActionability() (api/research-batch.js): excludeFromPriorities
+      // is true for a stale event-like signal, an ongoing-business-change
+      // signal published more than 180 days ago, or one with no
+      // trustworthy date at all. Reusing that flag here -- rather than
+      // inventing a second recency rule -- is the fix: only a signal Core
+      // itself still considers current may become this candidate's
+      // "current reason to reach out." Similarity and timing remain
+      // separate (founder direction, unchanged): a genuinely similar
+      // candidate with no CURRENT signal is still returned, just honestly
+      // represented as having none right now.
+      const currentSignals = signals.filter(s => s?.actionabilityStatus?.excludeFromPriorities !== true);
+      const topSignal = currentSignals[0] || null;
       return {
         company: candidate.name,
         seedCompany: candidate.seedName,
@@ -233,7 +248,16 @@ export default async function handler(req, res) {
           whyItMatters: topSignal.reasonToReachOut || topSignal.whyItMattersForPromo || '',
           identityConfidence: topSignal.identityConfidence || null,
           sourceUrl: topSignal.sourceUrl || null,
-          sourceName: topSignal.sourceName || topSignal.cleanSourceName || null
+          sourceName: topSignal.sourceName || topSignal.cleanSourceName || null,
+          // "This materially helps user trust" (founder direction): the
+          // real date(s) Core already resolved for this signal, passed
+          // through as-is -- never reformatted or guessed. eventDate is
+          // the event's OWN date (only ever set when the evidence text
+          // itself named one); publishedAt is the source article's
+          // publication date. A signal can carry either, both, or neither.
+          eventDate: topSignal.eventDateDisplay || topSignal.eventDate || null,
+          publishedAt: topSignal.publishedAt || null,
+          actionabilityLabel: topSignal.actionabilityStatus?.label || null
         } : null,
         hasCurrentReasonToReachOut: Boolean(topSignal),
         allSignals: signals,
