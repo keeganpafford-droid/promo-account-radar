@@ -47,6 +47,12 @@ h1{margin:0 0 6px;font-size:1.7rem}
 .save-btn[disabled]{opacity:.6;cursor:not-allowed}
 .empty-state{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;text-align:center;color:var(--muted)}
 .excluded-note{margin-top:10px;font-size:.8rem;color:var(--muted)}
+.missing-website-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.06);margin-bottom:14px}
+.missing-website-card h3{margin:0 0 4px;font-size:1.02rem}
+.missing-website-card p{margin:0 0 12px;color:var(--muted);font-size:.88rem;line-height:1.5}
+.missing-website-row{display:flex;gap:10px;flex-wrap:wrap}
+.missing-website-row input{flex:1;min-width:220px;height:44px;border:1px solid var(--line);border-radius:10px;padding:0 12px;font-size:.92rem;color:var(--navy)}
+.missing-website-error{margin-top:8px;color:#8a1f11;font-size:.82rem;font-weight:700;display:none}
 </style>
 </head>
 <body>
@@ -63,6 +69,10 @@ h1{margin:0 0 6px;font-size:1.7rem}
     <button class="btn" id="findBtn" type="button" disabled>Find Companies Like This</button>
     <span class="selected-count" id="selectedCount"></span>
     <div id="status" class="status" role="status"></div>
+  </section>
+
+  <section id="missingWebsiteSection" style="display:none">
+    <div id="missingWebsiteList"></div>
   </section>
 
   <section id="resultsSection" style="display:none">
@@ -200,6 +210,64 @@ h1{margin:0 0 6px;font-size:1.7rem}
     });
   }
 
+  // Founder product correction (2026-08-26): the server refuses to run any
+  // candidate research (no Serper/OpenAI calls at all) until every selected
+  // seed has a known website/domain -- a strong identity anchor materially
+  // improves lookalike discovery. Rather than a dead end, this renders an
+  // inline, plain-language prompt per missing seed and lets the rep supply
+  // it right here; saving continues the SAME search automatically, no
+  // restart, no re-picking seeds.
+  function renderMissingWebsite(missing){
+    document.getElementById('resultsSection').style.display = 'none';
+    const section = document.getElementById('missingWebsiteSection');
+    const list = document.getElementById('missingWebsiteList');
+    section.style.display = 'block';
+    list.innerHTML = missing.map(m => `
+      <div class="missing-website-card" data-account="${esc(m.name)}">
+        <h3>Add ${esc(m.name)}'s website</h3>
+        <p>A website helps House Accounts identify the right company and find more accurate matches.</p>
+        <div class="missing-website-row">
+          <input type="text" placeholder="companywebsite.com" data-account-input="${esc(m.name)}">
+          <button class="btn save-website-btn" data-account="${esc(m.name)}" type="button">Save &amp; Continue</button>
+        </div>
+        <div class="missing-website-error"></div>
+      </div>
+    `).join('');
+    list.querySelectorAll('.save-website-btn').forEach(btn => {
+      btn.addEventListener('click', () => saveMissingWebsite(btn));
+    });
+  }
+
+  async function saveMissingWebsite(btn){
+    const accountName = btn.dataset.account;
+    const card = btn.closest('.missing-website-card');
+    const input = card.querySelector('input[data-account-input]');
+    const errorEl = card.querySelector('.missing-website-error');
+    errorEl.style.display = 'none'; errorEl.textContent = '';
+    const website = (input.value || '').trim();
+    if(!website){ errorEl.textContent = 'Please enter a website.'; errorEl.style.display = 'block'; return; }
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try{
+      const headers = await HouseAuth.authHeadersAsync({'Content-Type':'application/json'});
+      if(!headers) return;
+      const res = await fetch('/api/account-website', {
+        method: 'POST', headers,
+        body: JSON.stringify({ accountName, website })
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || 'Could not save this website.');
+      card.remove();
+      if(!document.getElementById('missingWebsiteList').children.length){
+        document.getElementById('missingWebsiteSection').style.display = 'none';
+        findSimilar();
+      }
+    }catch(e){
+      btn.disabled = false; btn.textContent = 'Save & Continue';
+      errorEl.textContent = e.message || 'Could not save this website.';
+      errorEl.style.display = 'block';
+    }
+  }
+
   async function findSimilar(){
     clearStatus();
     const seedAccountNames = [...selected].map(i => accounts[i]?.name).filter(Boolean);
@@ -208,6 +276,7 @@ h1{margin:0 0 6px;font-size:1.7rem}
     btn.disabled = true; btn.textContent = 'Researching…';
     setStatus('Searching for companies that resemble your selected customer(s), then checking for a current reason to reach out. This can take up to a minute.', 'info');
     document.getElementById('resultsSection').style.display = 'none';
+    document.getElementById('missingWebsiteSection').style.display = 'none';
     try{
       const headers = await HouseAuth.authHeadersAsync({'Content-Type':'application/json'});
       if(!headers) return;
@@ -217,6 +286,11 @@ h1{margin:0 0 6px;font-size:1.7rem}
       });
       const data = await res.json().catch(()=>({}));
       if(!res.ok) throw new Error(data.error || 'Could not find similar companies.');
+      if(Array.isArray(data.missingWebsiteSeeds) && data.missingWebsiteSeeds.length){
+        clearStatus();
+        renderMissingWebsite(data.missingWebsiteSeeds);
+        return;
+      }
       clearStatus();
       renderResults(data);
     }catch(e){

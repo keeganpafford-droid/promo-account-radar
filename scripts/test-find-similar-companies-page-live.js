@@ -92,6 +92,15 @@ const FIND_SIMILAR_RESPONSE = {
 
 let findSimilarCalls = [];
 let prospectOneOffCalls = [];
+let accountWebsiteCalls = [];
+// Starts false so the FIRST /api/find-similar-companies call reproduces the
+// real founder-reported blocker: a selected seed with no known website, and
+// the server's own guided (not error) response. Set true by the mocked
+// /api/account-website route once a save succeeds, so the SECOND call (the
+// page's own auto-continue) returns the normal happy-path result -- proving
+// the whole "add website inline -> continue without restarting" loop end to
+// end against the real page, not just the server contract.
+let websiteSaved = false;
 
 async function withPage(baseUrl, run) {
   const browser = await chromium.launch({ executablePath: resolveChromiumExecutablePath() });
@@ -119,7 +128,21 @@ async function withPage(baseUrl, run) {
 
     await page.route('**/api/find-similar-companies', async route => {
       findSimilarCalls.push(JSON.parse(route.request().postData() || '{}'));
+      if (!websiteSaved) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ok: false,
+          missingWebsiteSeeds: [{ name: 'Ridgeline Apparel' }],
+          error: 'A website helps House Accounts identify the right company and find more accurate matches.'
+        }) });
+      }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FIND_SIMILAR_RESPONSE) });
+    });
+
+    await page.route('**/api/account-website', async route => {
+      const body = JSON.parse(route.request().postData() || '{}');
+      accountWebsiteCalls.push(body);
+      websiteSaved = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, website: 'ridgeline.com' }) });
     });
 
     await page.route('**/api/prospect-one-off', async route => {
@@ -159,35 +182,61 @@ async function run() {
       assert((await page.locator('#status').textContent()).includes('at most 3'), '5) the cap rejection is explained to the user, not silently ignored');
 
       await page.locator('#findBtn').click();
-      await page.waitForSelector('.result-card', { timeout: 10000 });
 
+      // Founder Preview QA correction (2026-08-26): the first real call
+      // reproduces the actual reported blocker -- a selected seed with no
+      // known website. The server's own guided response (not an error)
+      // must render as an inline, plain-language prompt right here, and
+      // results must NOT render yet.
+      await page.waitForSelector('.missing-website-card', { timeout: 10000 });
       assert(findSimilarCalls.length === 1, '6) clicking Find Companies Like This calls /api/find-similar-companies exactly once');
       const sentSeeds = findSimilarCalls[0]?.seedAccountNames || [];
       assert(sentSeeds.length === 3 && sentSeeds.every(n => DASHBOARD_ACCOUNTS.some(a => a.name === n)), `7) the request carries exactly the 3 explicitly-selected real seed names (got ${JSON.stringify(sentSeeds)})`);
+      assert(await page.locator('.result-card').count() === 0, '8) REQUIRED: no result cards render while a required seed website is missing');
+
+      const missingCard = page.locator('.missing-website-card');
+      assert(await missingCard.count() === 1, `9) exactly one missing-website card renders, matching the one seed the server named (got ${await missingCard.count()})`);
+      assert((await missingCard.locator('h3').textContent()).includes('website'), '10) the card heading matches the founder-specified copy ("Add ... website")');
+      assert((await missingCard.locator('p').textContent()).trim() === 'A website helps House Accounts identify the right company and find more accurate matches.', '11) REQUIRED: the exact founder-specified explanatory copy renders, no database terminology substituted in');
+      assert(await missingCard.locator('input').getAttribute('placeholder') === 'companywebsite.com', '12) the input placeholder matches the founder-specified example');
+      assert((await missingCard.locator('button').textContent()).replace(/\s+/g, ' ').trim() === 'Save & Continue', '13) the action button reads exactly "Save & Continue"');
+
+      await missingCard.locator('input').fill('ridgeline.com');
+      await missingCard.locator('button', { hasText: 'Save' }).click();
+
+      // Saving must both persist the website AND continue the SAME search
+      // automatically -- no restart, no re-picking seeds -- landing on the
+      // real result cards from the (now website-aware) second call.
+      await page.waitForSelector('.result-card', { timeout: 10000 });
+      assert(accountWebsiteCalls.length === 1, '14) REQUIRED: saving calls the new /api/account-website endpoint exactly once');
+      assert(accountWebsiteCalls[0]?.accountName === 'Ridgeline Apparel' && accountWebsiteCalls[0]?.website === 'ridgeline.com', `15) the save call carries the correct account name and the entered website (got ${JSON.stringify(accountWebsiteCalls[0])})`);
+      assert(await page.locator('.missing-website-card').count() === 0, '16) the missing-website prompt is gone once resolved');
+      assert(findSimilarCalls.length === 2, '17) REQUIRED: the lookalike search continues automatically after the save -- a second call happens with no further click from the user');
+      assert(JSON.stringify(findSimilarCalls[1]?.seedAccountNames) === JSON.stringify(sentSeeds), '18) REQUIRED: the continued search reuses the exact same seed selection -- the workflow is not restarted');
 
       const cardCount = await page.locator('.result-card').count();
-      assert(cardCount === 2, `8) both returned candidates render as result cards (got ${cardCount})`);
+      assert(cardCount === 2, `19) both returned candidates render as result cards (got ${cardCount})`);
 
       const peakCard = page.locator('.result-card', { hasText: 'Peak Outfitters' });
-      assert(await peakCard.locator('.seed-tag').textContent().then(t => t.includes('Ridgeline Apparel')), '9) each card is clearly tagged with the seed customer it came from');
-      assert(await peakCard.locator('.rank-badge').count() === 1, '10) a candidate with a grounded current signal shows the "Grounded reason to reach out" badge');
-      assert((await peakCard.locator('.section-text').first().textContent()).includes('Outdoor Retail'), '11) the plain-English similarity explanation renders on the card');
-      assert(await peakCard.locator('a.source-link').count() >= 1, '12) evidence/source links render for a grounded candidate');
+      assert(await peakCard.locator('.seed-tag').textContent().then(t => t.includes('Ridgeline Apparel')), '20) each card is clearly tagged with the seed customer it came from');
+      assert(await peakCard.locator('.rank-badge').count() === 1, '21) a candidate with a grounded current signal shows the "Grounded reason to reach out" badge');
+      assert((await peakCard.locator('.section-text').first().textContent()).includes('Outdoor Retail'), '22) the plain-English similarity explanation renders on the card');
+      assert(await peakCard.locator('a.source-link').count() >= 1, '23) evidence/source links render for a grounded candidate');
 
       const northfaceCard = page.locator('.result-card', { hasText: 'Northface Trail Co' });
-      assert(await northfaceCard.locator('.rank-badge').count() === 0, '13) a candidate with no current signal does NOT show the grounded-reason badge');
-      assert((await northfaceCard.locator('.no-signal').textContent()).includes('No current, timely public signal'), '14) REQUIRED: the no-signal candidate is represented honestly on the page, not dropped or fabricated');
+      assert(await northfaceCard.locator('.rank-badge').count() === 0, '24) a candidate with no current signal does NOT show the grounded-reason badge');
+      assert((await northfaceCard.locator('.no-signal').textContent()).includes('No current, timely public signal'), '25) REQUIRED: the no-signal candidate is represented honestly on the page, not dropped or fabricated');
 
       const excludedNoteText = await page.locator('.excluded-note').textContent();
-      assert(excludedNoteText.includes('1 candidate(s) excluded'), '15) the excluded-candidate count is visible on the page, not silently hidden');
+      assert(excludedNoteText.includes('1 candidate(s) excluded'), '26) the excluded-candidate count is visible on the page, not silently hidden');
 
       await peakCard.locator('.save-btn').click();
       await page.waitForFunction(() => document.querySelector('.save-btn')?.textContent?.includes('Saved'), { timeout: 5000 });
-      assert(prospectOneOffCalls.length === 1, '16) Save to Target Accounts calls the existing, unmodified /api/prospect-one-off endpoint exactly once');
-      assert(prospectOneOffCalls[0]?.companyName === 'Peak Outfitters', '17) the save call carries the correct candidate company name');
-      assert((await peakCard.locator('.save-btn').textContent()).includes('Saved'), '18) the button reflects the successful save back to the user');
+      assert(prospectOneOffCalls.length === 1, '27) Save to Target Accounts calls the existing, unmodified /api/prospect-one-off endpoint exactly once');
+      assert(prospectOneOffCalls[0]?.companyName === 'Peak Outfitters', '28) the save call carries the correct candidate company name');
+      assert((await peakCard.locator('.save-btn').textContent()).includes('Saved'), '29) the button reflects the successful save back to the user');
 
-      assert(pageErrors.length === 0, `19) REQUIRED: no uncaught page errors during the whole flow (got: ${pageErrors.join(' | ')})`);
+      assert(pageErrors.length === 0, `30) REQUIRED: no uncaught page errors during the whole flow (got: ${pageErrors.join(' | ')})`);
     });
   } finally {
     server.close();

@@ -37,6 +37,7 @@
 import { discoverLookalikeCandidates, filterAndCapCandidates, normalizeCompanyName } from './lib/lookalike-discovery.js';
 import { serperSearch, callOpenAIJson, parseJsonLoose, mapLimit } from './research-batch.js';
 import { runResearchPipeline } from './lib/research-pipeline.js';
+import { normalizeDomain } from './lib/monitoring-identity.js';
 
 const MAX_SEEDS = 3;
 const MAX_CANDIDATES = 5;
@@ -94,6 +95,16 @@ function inFilter(vals) { return `in.(${vals.map(v => `"${String(v).replace(/"/g
 // field precedence (api/research-batch.js) so a seed built here matches
 // what the normal research pipeline already considers "known" about an
 // account.
+//
+// Founder-confirmed schema correction (2026-08-26, found in Preview QA): a
+// previous version of this function read row.website and metrics.website --
+// ha_accounts HAS NO website COLUMN AT ALL and never has (see
+// supabase-schema.sql's own table definition), so selecting it 400'd every
+// request. website is CANONICALLY only ever raw_data.website -- confirmed
+// by api/company-identity.js's own header comment and read the exact same
+// way everywhere else in the codebase (api/get-dashboard.js,
+// api/monitoring-lists.js, api/lib/monitoring-targets.js). Do not
+// reintroduce a row.website or metrics.website read here.
 function toSeedAccount(row = {}) {
   const metrics = row.metrics && typeof row.metrics === 'object' ? row.metrics : {};
   const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
@@ -101,7 +112,7 @@ function toSeedAccount(row = {}) {
     name: clean(row.account_name),
     industry: clean(row.industry || metrics.industry || raw.industry || ''),
     location: clean(metrics.cityState || metrics.location || raw.location || ''),
-    website: clean(row.website || metrics.website || raw.website || '')
+    website: clean(raw.website || '')
   };
 }
 
@@ -127,7 +138,7 @@ export default async function handler(req, res) {
     // candidate that is already one of this org's own customers is never
     // suggested as "net-new."
     const orgAccounts = ctx.userIds.length
-      ? await sb(`ha_accounts?user_id=${inFilter(ctx.userIds)}&select=account_name,industry,website,metrics,raw_data&limit=5000`)
+      ? await sb(`ha_accounts?user_id=${inFilter(ctx.userIds)}&select=account_name,industry,metrics,raw_data&limit=5000`)
       : [];
     const accountsByNormalizedName = new Map((orgAccounts || []).map(a => [normalizeCompanyName(a.account_name), a]));
     const existingCustomerNames = (orgAccounts || []).map(a => a.account_name).filter(Boolean);
@@ -140,6 +151,25 @@ export default async function handler(req, res) {
       seeds.push(toSeedAccount(match));
     }
     if (!seeds.length) return json(res, 400, { error: 'None of the requested seed companies match an existing customer account in your organization.', missingSeeds });
+
+    // Founder product decision (2026-08-26): website/domain is a required
+    // identity anchor for THIS feature specifically -- a strong anchor
+    // materially improves lookalike discovery -- but is NOT globally
+    // required for every monitored account. If HA doesn't already know a
+    // selected seed's canonical website, this run must not proceed: no
+    // Serper query, no OpenAI call, for ANY seed in this request, until
+    // every seed carries a known website. normalizeDomain() (the same
+    // existing normalizer Monitoring Identity V1 already uses to decide
+    // whether an uploaded website is usable) is the single source of truth
+    // for "known" here -- an empty/unparseable value is treated as missing.
+    const missingWebsiteSeeds = seeds.filter(seed => !normalizeDomain(seed.website));
+    if (missingWebsiteSeeds.length) {
+      return json(res, 200, {
+        ok: false,
+        missingWebsiteSeeds: missingWebsiteSeeds.map(seed => ({ name: seed.name })),
+        error: "A website helps House Accounts identify the right company and find more accurate matches."
+      });
+    }
 
     // Stage A: candidate discovery, per seed.
     const seedResults = [];

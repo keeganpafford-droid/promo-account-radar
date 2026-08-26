@@ -168,10 +168,18 @@ function fakeRes() {
   return res;
 }
 
+// Website is CANONICALLY raw_data.website only (ha_accounts has no website
+// column at all -- confirmed schema fix, 2026-08-26 Founder Preview QA
+// blocker). Ridgeline Apparel carries a known website so B5-B8's existing
+// happy-path/no-signal/cap/cost-gate coverage keeps exercising the full
+// Stage A/B pipeline unaffected by the new identity-gate; a seed with NO
+// known website is its own dedicated fixture below (WEBSITELESS_SEED_NAME).
 const ORG_ACCOUNTS = [
-  { account_name: 'Ridgeline Apparel', industry: 'Outdoor Retail', website: '', metrics: {}, raw_data: {} },
-  { account_name: 'Summit Gear Co', industry: 'Outdoor Retail', website: '', metrics: {}, raw_data: {} }
+  { account_name: 'Ridgeline Apparel', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'ridgeline.com' } },
+  { account_name: 'Summit Gear Co', industry: 'Outdoor Retail', metrics: {}, raw_data: { website: 'summitgear.com' } },
+  { account_name: 'No Website Co', industry: 'Outdoor Retail', metrics: {}, raw_data: {} }
 ];
+const WEBSITELESS_SEED_NAME = 'No Website Co';
 
 // Generic Serper mock: same small, non-company-specific result set for every
 // query -- this test suite is about the endpoint's own orchestration
@@ -390,6 +398,52 @@ async function run() {
     assert(res._status === 200, `B8) request succeeds (got ${res._status})`);
     assert(!fetchImpl.calls.some(u => u.includes('ha_monitoring_targets')), 'B8) REQUIRED: no ha_monitoring_targets row is ever created or touched -- a candidate here is never enrolled in recurring monitoring');
     assert(!fetchImpl.calls.some(u => u.includes('ha_accounts') && false), 'B8) sanity: ha_accounts is only ever read (GET), the mock only implements read responses'); // structural: writes would 404/throw against this mock
+  }
+
+  // B9) REQUIRED (Founder Preview QA correction, 2026-08-26): a selected
+  // seed with no known website/domain must not run ANY candidate research --
+  // no Serper query, no OpenAI call -- for this seed OR any other seed in
+  // the same request. Returns a guided, non-error response instead.
+  {
+    const fetchImpl = createFullMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: [WEBSITELESS_SEED_NAME] });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._status === 200, `B9) a missing-website seed returns 200 with a guided state, not a hard error (got ${res._status})`);
+    assert(res._body?.ok === false, 'B9) the response is explicitly ok:false so the client can distinguish this from a successful result');
+    assert(Array.isArray(res._body?.missingWebsiteSeeds) && res._body.missingWebsiteSeeds.some(s => s.name === WEBSITELESS_SEED_NAME), `B9) REQUIRED: the specific seed missing a website is named back (got ${JSON.stringify(res._body?.missingWebsiteSeeds)})`);
+    assert(!/column|raw_data|jsonb|schema/i.test(res._body?.error || ''), `B9) REQUIRED: the message is plain and customer-facing, no database terminology (got "${res._body?.error}")`);
+    assert(!fetchImpl.calls.some(u => u.includes('google.serper.dev')), 'B9) REQUIRED (cost gate): zero Serper calls before the required seed identity is present');
+    assert(!fetchImpl.calls.some(u => u.includes('api.openai.com')), 'B9) REQUIRED (cost gate): zero OpenAI calls before the required seed identity is present');
+  }
+
+  // B10) The same gate holds even when mixed with a seed that DOES have a
+  // known website -- the whole request is blocked, not partially run, so
+  // the client only ever has to resolve one clear state per call.
+  {
+    const fetchImpl = createFullMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: ['Ridgeline Apparel', WEBSITELESS_SEED_NAME] });
+    const res = fakeRes();
+    await handler(req, res);
+    assert(res._body?.ok === false && res._body.missingWebsiteSeeds.length === 1 && res._body.missingWebsiteSeeds[0].name === WEBSITELESS_SEED_NAME, `B10) REQUIRED: a mixed request is blocked entirely, naming only the seed(s) actually missing a website (got ${JSON.stringify(res._body)})`);
+    assert(!fetchImpl.calls.some(u => u.includes('google.serper.dev') || u.includes('api.openai.com')), 'B10) REQUIRED (cost gate): the seed that DOES have a website still triggers zero provider calls while any seed in the request is missing one');
+  }
+
+  // B11) Regression proof for the actual reported blocker: the org-accounts
+  // fetch never selects a website column (ha_accounts has none) and a
+  // seed's website is read exclusively from raw_data.website.
+  {
+    const fetchImpl = createFullMock();
+    global.fetch = fetchImpl;
+    const req = fakeReq({ seedAccountNames: ['Ridgeline Apparel'] });
+    const res = fakeRes();
+    await handler(req, res);
+    const accountsCall = fetchImpl.calls.find(u => u.includes('/rest/v1/ha_accounts'));
+    assert(Boolean(accountsCall), 'B11) sanity: the org-accounts fetch happened');
+    assert(!/[?&]select=[^&]*\bwebsite\b/.test(decodeURIComponent(accountsCall || '')), `B11) REQUIRED (regression): the ha_accounts query never selects a "website" column -- it does not exist and previously 400'd every request (select was: ${decodeURIComponent(accountsCall || '')})`);
+    assert(res._status === 200 && res._body?.ok !== false, `B11) REQUIRED: a seed with a real raw_data.website value proceeds normally, no longer blocked by the schema bug (got ${res._status}, ${JSON.stringify(res._body).slice(0, 200)})`);
   }
 }
 
