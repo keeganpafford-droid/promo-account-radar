@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en" data-protected="true">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Find Companies Like This | House Accounts</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site-header.css">
+<script src="/site-header.js" defer></script>
+<style>
+:root{--navy:#17375E;--teal:#1FB7AE;--gold:#F5A623;--bg:#F7F8FA;--line:#D8DEE9;--muted:#5f6f86}
+body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--navy)}
+.wrap{max-width:960px;margin:0 auto;padding:32px 24px 60px}
+h1{margin:0 0 6px;font-size:1.7rem}
+.intro{color:var(--muted);max-width:680px;line-height:1.5;margin-bottom:6px}
+.doctrine{margin:14px 0 22px;padding:12px 14px;border:1px solid rgba(31,183,174,.3);background:#eefdfb;border-radius:12px;color:var(--navy);font-size:.88rem;line-height:1.5}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 10px 28px rgba(23,55,94,.06);margin-bottom:20px}
+.card h2{margin:0 0 4px;font-size:1.15rem}
+.card p.hint{color:var(--muted);font-size:.88rem;margin:0 0 14px}
+.seed-list{display:grid;gap:8px;max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:12px}
+.seed-row{display:flex;align-items:center;gap:10px;padding:6px 4px;border-radius:8px}
+.seed-row:hover{background:#F7F8FA}
+.seed-row input{margin:0}
+.seed-row label{flex:1;font-weight:700;font-size:.92rem;cursor:pointer}
+.seed-badge{font-size:.72rem;font-weight:800;padding:3px 8px;border-radius:999px;background:#eefdfb;color:#0f766e}
+.seed-badge.cold{background:#eef1f5;color:#667085}
+.seed-note{color:var(--muted);font-size:.82rem;margin-bottom:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;background:var(--gold);border:0;border-radius:10px;padding:12px 18px;color:#1f2937;font-weight:900;cursor:pointer;min-height:44px}
+.btn[disabled]{opacity:.6;cursor:not-allowed}
+.selected-count{font-size:.85rem;color:var(--muted);margin-left:10px}
+.status{margin-top:14px;padding:11px 12px;border-radius:10px;font-size:.9rem;font-weight:700;display:none}
+.status.show{display:block}
+.status.error{background:#fdecea;border:1px solid #f6c6bd;color:#8a1f11}
+.status.info{background:#eefdfb;border:1px solid rgba(31,183,174,.28);color:#0f766e}
+.results{display:grid;gap:16px}
+.result-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 28px rgba(23,55,94,.06)}
+.result-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.result-top h3{margin:0;font-size:1.15rem}
+.seed-tag{font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.rank-badge{font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;background:#fff8e9;border:1px solid rgba(245,166,35,.35);border-radius:999px;padding:5px 8px;white-space:nowrap}
+.section-label{font-family:monospace;font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+.section-label:first-of-type{margin-top:0}
+.section-text{font-size:.92rem;color:#374151;line-height:1.5}
+.evidence{background:#F7F8FA;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.85rem;color:#374151;font-style:italic}
+.no-signal{color:var(--muted);font-size:.88rem;font-style:italic}
+.source-link{font-size:.82rem;color:var(--teal);font-weight:700;text-decoration:none}
+.save-btn{margin-top:14px;border:1px solid var(--line);background:#fff;color:var(--navy);border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer;font-size:.85rem}
+.save-btn[disabled]{opacity:.6;cursor:not-allowed}
+.empty-state{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;text-align:center;color:var(--muted)}
+.excluded-note{margin-top:10px;font-size:.8rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>Find Companies Like This</h1>
+  <p class="intro">Pick an existing customer. House Accounts will search for real, net-new companies that resemble them, then check whether there's a current, grounded reason to reach out to each one.</p>
+  <div class="doctrine">This starts from an existing customer. The companies below are <strong>net-new prospects</strong>, not monitored customers — researching them does not use your monitored-account capacity, and none of them are added to ongoing monitoring automatically.</div>
+
+  <section class="card">
+    <h2>1. Pick a seed customer</h2>
+    <p class="hint">Up to 3. This is your explicit choice — House Accounts never picks "winning customers" for you automatically.</p>
+    <div id="seedList" class="seed-list">Loading your customer accounts…</div>
+    <p class="seed-note">Relationship strength (when shown) is a hint about which customers might make good seeds — it isn't the definition of "similar."</p>
+    <button class="btn" id="findBtn" type="button" disabled>Find Companies Like This</button>
+    <span class="selected-count" id="selectedCount"></span>
+    <div id="status" class="status" role="status"></div>
+  </section>
+
+  <section id="resultsSection" style="display:none">
+    <div id="results" class="results"></div>
+  </section>
+</main>
+<script src="/auth-client.js"></script>
+<script>
+(function(){
+  const MAX_SEEDS = 3;
+  let accounts = [];
+  let selected = new Set();
+
+  function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function setStatus(text, type){
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.className = 'status show ' + (type||'info');
+  }
+  function clearStatus(){
+    const el = document.getElementById('status');
+    el.className = 'status';
+    el.textContent = '';
+  }
+
+  function relationshipBadge(account){
+    const mode = String(account.relationshipMode || '').trim();
+    if(!mode) return '';
+    const cls = /cold/i.test(mode) ? 'cold' : '';
+    return `<span class="seed-badge ${cls}">${esc(mode)}</span>`;
+  }
+
+  function renderSeedList(){
+    const el = document.getElementById('seedList');
+    if(!accounts.length){ el.textContent = 'No existing customer accounts found. Upload a customer list first.'; return; }
+    el.innerHTML = accounts.map((a,i) => `
+      <div class="seed-row">
+        <input type="checkbox" id="seed_${i}" data-idx="${i}">
+        <label for="seed_${i}">${esc(a.name)}</label>
+        ${relationshipBadge(a)}
+      </div>
+    `).join('');
+    el.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = Number(cb.dataset.idx);
+        if(cb.checked){
+          if(selected.size >= MAX_SEEDS){ cb.checked = false; setStatus(`You can pick at most ${MAX_SEEDS} seed customers.`, 'error'); return; }
+          selected.add(idx);
+        } else {
+          selected.delete(idx);
+        }
+        updateSelectedCount();
+      });
+    });
+  }
+
+  function updateSelectedCount(){
+    document.getElementById('selectedCount').textContent = selected.size ? `${selected.size} selected` : '';
+    document.getElementById('findBtn').disabled = selected.size === 0;
+  }
+
+  async function loadAccounts(){
+    try{
+      const user = HouseAuth.getUser();
+      const headers = await HouseAuth.authHeadersAsync();
+      if(!headers) return;
+      const email = user?.email || '';
+      const res = await fetch(`/api/get-dashboard?email=${encodeURIComponent(email)}&view=my`, { headers, cache: 'no-store' });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || 'Could not load your accounts.');
+      accounts = (data.accounts || []).filter(a => a && a.name).map(a => ({
+        name: a.name,
+        relationshipMode: a.relationshipMode || ''
+      }));
+      renderSeedList();
+    }catch(e){
+      document.getElementById('seedList').textContent = e.message || 'Could not load your accounts.';
+    }
+  }
+
+  function resultCardHtml(r, rank){
+    const reason = r.reasonToReachOut;
+    return `
+      <div class="result-card">
+        <div class="result-top">
+          <div><div class="seed-tag">Like ${esc(r.seedCompany)}</div><h3>${esc(r.company)}</h3></div>
+          ${r.hasCurrentReasonToReachOut ? '<span class="rank-badge">Grounded reason to reach out</span>' : ''}
+        </div>
+        <div class="section-label">Why HA thinks this resembles ${esc(r.seedCompany)}</div>
+        <div class="section-text">${esc(r.whySimilar)}</div>
+        ${r.similarityEvidence ? `<div class="evidence">"${esc(r.similarityEvidence)}"${r.similaritySourceUrl?` — <a class="source-link" href="${esc(r.similaritySourceUrl)}" target="_blank" rel="noopener">source</a>`:''}</div>` : ''}
+        <div class="section-label">Current reason to reach out</div>
+        ${reason ? `
+          <div class="section-text"><strong>${esc(reason.title)}</strong></div>
+          <div class="section-text">${esc(reason.whyItMatters)}</div>
+          ${reason.sourceUrl ? `<a class="source-link" href="${esc(reason.sourceUrl)}" target="_blank" rel="noopener">${esc(reason.sourceName||'Source')}</a>` : ''}
+        ` : `<div class="no-signal">No current, timely public signal was found for ${esc(r.company)} today. It may still be a genuinely similar company worth pursuing — House Accounts just doesn't have a grounded reason to reach out to them right now.</div>`}
+        <button class="save-btn" data-name="${esc(r.company)}">Save to Target Accounts</button>
+      </div>
+    `;
+  }
+
+  function renderResults(data){
+    document.getElementById('resultsSection').style.display = 'block';
+    const el = document.getElementById('results');
+    if(!data.results.length){
+      el.innerHTML = '<div class="empty-state">No net-new candidates survived (existing customers and duplicates are excluded automatically). Try a different seed.</div>';
+      return;
+    }
+    el.innerHTML = data.results.map((r,i) => resultCardHtml(r,i)).join('')
+      + (data.excluded && data.excluded.length ? `<div class="excluded-note">${data.excluded.length} candidate(s) excluded (already an existing customer, duplicate, or the seed itself).</div>` : '');
+    el.querySelectorAll('.save-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.name;
+        const match = data.results.find(r => r.company === name);
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try{
+          const headers = await HouseAuth.authHeadersAsync({'Content-Type':'application/json'});
+          if(!headers) return;
+          const res = await fetch('/api/prospect-one-off', {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              companyName: name,
+              signals: match?.allSignals || []
+            })
+          });
+          const out = await res.json().catch(()=>({}));
+          if(!res.ok) throw new Error(out.error || 'Could not save.');
+          btn.textContent = out.alreadyMonitored ? 'Already saved' : 'Saved ✓';
+        }catch(e){
+          btn.disabled = false; btn.textContent = 'Save to Target Accounts';
+          setStatus(e.message || 'Could not save this candidate.', 'error');
+        }
+      });
+    });
+  }
+
+  async function findSimilar(){
+    clearStatus();
+    const seedAccountNames = [...selected].map(i => accounts[i]?.name).filter(Boolean);
+    if(!seedAccountNames.length) return;
+    const btn = document.getElementById('findBtn');
+    btn.disabled = true; btn.textContent = 'Researching…';
+    setStatus('Searching for companies that resemble your selected customer(s), then checking for a current reason to reach out. This can take up to a minute.', 'info');
+    document.getElementById('resultsSection').style.display = 'none';
+    try{
+      const headers = await HouseAuth.authHeadersAsync({'Content-Type':'application/json'});
+      if(!headers) return;
+      const res = await fetch('/api/find-similar-companies', {
+        method: 'POST', headers,
+        body: JSON.stringify({ seedAccountNames })
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || 'Could not find similar companies.');
+      clearStatus();
+      renderResults(data);
+    }catch(e){
+      setStatus(e.message || 'Could not find similar companies. Please try again.', 'error');
+    }finally{
+      btn.disabled = selected.size === 0;
+      btn.textContent = 'Find Companies Like This';
+    }
+  }
+
+  document.getElementById('findBtn').addEventListener('click', findSimilar);
+  document.addEventListener('DOMContentLoaded', loadAccounts);
+  if(document.readyState !== 'loading') loadAccounts();
+})();
+</script>
+</body></html>

@@ -4095,5 +4095,11 @@ export {
   // Phase 2A worker-readiness: the extracted parse/map/validate/grounding/
   // event-resolution tail, and the prompt-builder it depends on -- see
   // their own header comments above.
-  mapSignalsFromModelOutput, buildSynthesisPrompt, parseJsonLoose
+  mapSignalsFromModelOutput, buildSynthesisPrompt, parseJsonLoose,
+  // Find More Like Them V1: additive-only export, same pattern as the
+  // Phase 1 worker-readiness exports above -- serperSearch is already a
+  // standalone, request/response-free function (no behavior change) reused
+  // by api/lib/lookalike-discovery.js for its own candidate-name-discovery
+  // queries, rather than a second, duplicated Serper-calling implementation.
+  serperSearch
 };

@@ -353,7 +353,13 @@ async function handle(f){
     const researchPayload={mode:'prospect-intelligence',accounts:accounts.map(a=>({name:a.name,website:a.website,industry:a.industry,location:a.location,contacts:a.contacts}))};
     console.log('[Prospect UI] Calling research endpoint', new URL(researchEndpoint, window.location.origin).href);
     console.log('[Prospect UI] Research payload', researchPayload);
-    const res=await fetch(researchEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(researchPayload)});
+    // Bug fix (2026-08-26, found while building Find More Like Them V1):
+    // this call was missing the Authorization header the one-off research
+    // flow below already sends -- api/research-batch.js's no-uploadId path
+    // now requires a valid Bearer token for every mode including
+    // prospect-intelligence, so this call would 401 as written.
+    const headers=window.HouseAuth?.authHeaders?.({'Content-Type':'application/json'})||{'Content-Type':'application/json'};
+    const res=await fetch(researchEndpoint,{method:'POST',headers,cache:'no-store',body:JSON.stringify(researchPayload)});
     const data=await res.json();
     console.log('[Prospect UI] Raw /api/research-batch response', data);
     if(!res.ok) throw new Error(data.error||'Prospect research failed');
